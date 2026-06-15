@@ -1,0 +1,17 @@
+{
+  "name": "opencode-ultracode-workflow-plugin",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "test": "node --import tsx --test tests/**/*.test.ts",
+    "validate:assets": "tsx scripts/validate-assets.ts",
+    "check": "npm run build && npm run test && npm run validate:assets"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.0",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}
