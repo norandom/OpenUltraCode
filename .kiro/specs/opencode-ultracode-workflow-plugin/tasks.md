@@ -8,7 +8,7 @@
   - Set up the package manifest, TypeScript compiler configuration, test runner configuration, source tree, opencode asset directories, and validation script entry point described in the design.
   - Done when the repository has a runnable build command, a runnable test command, and empty but correctly located source, plugin, skill, agent, command, docs, and test directories.
 
-- [ ] 1.2 Define the shared workflow contracts
+- [x] 1.2 Define the shared workflow contracts
   _Boundary: Shared Contracts_
   _Depends: 1.1_
   _Requirements: 2.3, 4.6, 5.4, 5.5, 8.4, 8.5, 9.2, 9.3, 9.4_
