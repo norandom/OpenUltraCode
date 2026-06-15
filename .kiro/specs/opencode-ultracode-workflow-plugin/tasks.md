@@ -91,7 +91,7 @@
 
 ## 4. Create The Workflow Prompt Assets
 
-- [ ] 4.1 (P) Create the layered OpenUltraCode skill
+- [x] 4.1 (P) Create the layered OpenUltraCode skill
   _Boundary: Skill Prompt Asset_
   _Depends: 1.1_
   _Requirements: 2.1, 2.2, 2.5, 3.1, 3.2, 3.3, 3.4, 3.5, 10.2_
