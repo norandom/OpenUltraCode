@@ -1,5 +1,14 @@
 import type { DegradationNotice, Finding, OpenUltraCodeOptions, VerificationEvidence, WorkflowState } from "./types.js"
 import type { WorkflowStateStore } from "./state.js"
+import { createWorkflowStatusTool, type WorkflowStatusTool } from "./status-tool.js"
+import {
+  createCompletionReportTool,
+  createRecordBlockedCheckTool,
+  createRecordVerificationTool,
+  type CompletionReportTool,
+  type RecordBlockedCheckTool,
+  type RecordVerificationTool
+} from "./verification-tool.js"
 
 export interface OpenCodePluginInput {
   readonly directory: string
@@ -8,6 +17,14 @@ export interface OpenCodePluginInput {
 export interface OpenUltraCodeHooks {
   readonly "experimental.session.compacting"?: () => Promise<string>
   readonly "experimental.compaction.autocontinue"?: () => Promise<string>
+  readonly tool?: OpenUltraCodeTools
+}
+
+export interface OpenUltraCodeTools {
+  readonly open_ultracode_status: WorkflowStatusTool
+  readonly open_ultracode_record_verification: RecordVerificationTool
+  readonly open_ultracode_record_blocked_check: RecordBlockedCheckTool
+  readonly open_ultracode_completion_report: CompletionReportTool
 }
 
 export function createOpenUltraCodeHooks(
@@ -21,7 +38,13 @@ export function createOpenUltraCodeHooks(
 
   return {
     "experimental.session.compacting": async () => createCompactionContext(await stateStore.load()),
-    "experimental.compaction.autocontinue": async () => createCompactionContext(await stateStore.load())
+    "experimental.compaction.autocontinue": async () => createCompactionContext(await stateStore.load()),
+    tool: {
+      open_ultracode_status: createWorkflowStatusTool(config, stateStore),
+      open_ultracode_record_verification: createRecordVerificationTool(stateStore),
+      open_ultracode_record_blocked_check: createRecordBlockedCheckTool(stateStore),
+      open_ultracode_completion_report: createCompletionReportTool(config, stateStore)
+    }
   }
 }
 

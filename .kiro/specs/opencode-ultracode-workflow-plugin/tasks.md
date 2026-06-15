@@ -68,7 +68,7 @@
   - Use supported opencode hooks to preserve active workflow mode, phase, assumptions, open findings, verification state, and degradation notices across session compaction or continuation points.
   - Done when compaction context includes the minimal workflow summary needed to resume without exposing unrelated project data.
 
-- [ ] 3.3 Add workflow status and verification tools
+- [x] 3.3 Add workflow status and verification tools
   _Boundary: Plugin Tools_
   _Depends: 2.3, 3.1_
   _Requirements: 2.4, 8.1, 8.2, 8.3, 8.4, 8.5, 10.5_

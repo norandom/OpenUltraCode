@@ -4,7 +4,17 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, it } from "node:test"
 
-import { OpenUltraCodePlugin, createWorkflowStateStore, type OpenUltraCodeHooks, type WorkflowState } from "../src/index.js"
+import {
+  OpenUltraCodePlugin,
+  createWorkflowStateStore,
+  type CompletionReportTool,
+  type OpenUltraCodeHooks,
+  type RecordBlockedCheckTool,
+  type RecordVerificationTool,
+  type VerificationEvidence,
+  type WorkflowState,
+  type WorkflowStatusTool
+} from "../src/index.js"
 
 const stateDirectory = ".opencode/open-ultracode/state"
 const stateFile = join(stateDirectory, "workflow-state.json")
@@ -51,7 +61,17 @@ describe("OpenUltraCode plugin entry point", () => {
 
     assert.equal(typeof hooks["experimental.session.compacting"], "function")
     assert.equal(typeof hooks["experimental.compaction.autocontinue"], "function")
+    assert.equal(typeof hooks.tool?.open_ultracode_status?.execute, "function")
+    assert.equal(typeof hooks.tool?.open_ultracode_record_verification?.execute, "function")
+    assert.equal(typeof hooks.tool?.open_ultracode_record_blocked_check?.execute, "function")
+    assert.equal(typeof hooks.tool?.open_ultracode_completion_report?.execute, "function")
     assert.equal("experimental" in hooks, false)
+  })
+
+  it("does not register workflow tools when disabled", async () => {
+    const hooks = await OpenUltraCodePlugin({ directory: await createProjectRoot() }, { enabled: false })
+
+    assert.equal("tool" in hooks, false)
   })
 
   it("returns minimal continuity context from the autocontinue hook", async () => {
@@ -119,6 +139,125 @@ describe("OpenUltraCode plugin entry point", () => {
       /enabled must be a boolean when provided/
     )
   })
+
+  it("reports workflow status from project-local state", async () => {
+    const projectRoot = await createProjectRoot()
+    const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
+    await store.update(createState())
+    const hooks = await OpenUltraCodePlugin({ directory: projectRoot }, { enabled: true })
+
+    const status = await getStatusTool(hooks).execute({})
+
+    assert.equal(status.active, true)
+    assert.equal(status.mode, "build")
+    assert.equal(status.phase, "verification")
+    assert.equal(status.completion?.status, "partial")
+    assert.deepEqual(status.degradations, ["D-1"])
+    assert.deepEqual(status.openFindings, ["F-1"])
+    assert.deepEqual(status.verification, ["VE-1:pass", "VE-2:not-run"])
+  })
+
+  it("records verification evidence into workflow state", async () => {
+    const projectRoot = await createProjectRoot()
+    const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
+    await store.update(createState())
+    const hooks = await OpenUltraCodePlugin({ directory: projectRoot }, { enabled: true })
+
+    const result = await getRecordVerificationTool(hooks).execute({
+      id: "VE-3",
+      kind: "build",
+      result: "pass",
+      summary: "Build passed.",
+      command: "npm run build",
+      criteriaIds: ["AC-1"]
+    })
+    const loaded = await store.load()
+
+    assert.equal(result.recorded, true)
+    assert.equal(result.evidenceId, "VE-3")
+    assert.equal(loaded.state?.verification.at(-1)?.id, "VE-3")
+    assert.equal(loaded.state?.verification.at(-1)?.result, "pass")
+  })
+
+  it("records blocked checks as blocked verification evidence", async () => {
+    const projectRoot = await createProjectRoot()
+    const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
+    await store.update(createState())
+    const hooks = await OpenUltraCodePlugin({ directory: projectRoot }, { enabled: true })
+
+    const result = await getRecordBlockedCheckTool(hooks).execute({
+      id: "VE-4",
+      kind: "audit",
+      summary: "Audit could not run.",
+      command: "npm audit --audit-level=high",
+      criteriaIds: ["AC-1"],
+      reason: "Network access was unavailable.",
+      residualRisk: "High-severity dependency vulnerabilities may be unknown."
+    })
+    const loaded = await store.load()
+
+    assert.equal(result.recorded, true)
+    assert.equal(result.evidenceId, "VE-4")
+    assert.equal(loaded.state?.verification.at(-1)?.result, "blocked")
+    assert.equal(loaded.state?.verification.at(-1)?.reason, "Network access was unavailable.")
+  })
+
+  it("produces completion reports with the runtime gate logic", async () => {
+    const projectRoot = await createProjectRoot()
+    const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
+    await store.update(withoutCompletion({
+      ...createState(),
+      criteria: [
+        {
+          id: "AC-1",
+          text: "Completion evidence maps to the criterion.",
+          source: "spec",
+          status: "pending",
+          requirementId: "8.5"
+        }
+      ],
+      verification: [
+        {
+          id: "VE-1",
+          kind: "test",
+          result: "pass",
+          summary: "Unit tests passed.",
+          command: "npm test",
+          criteriaIds: ["AC-1"]
+        }
+      ]
+    }))
+    const hooks = await OpenUltraCodePlugin({ directory: projectRoot }, { enabled: true })
+
+    const report = await getCompletionReportTool(hooks).execute({})
+    const loaded = await store.load()
+
+    assert.equal(report.status, "verified")
+    assert.equal(loaded.state?.completion?.status, "verified")
+    assert.deepEqual(loaded.state?.completion?.verificationIds, ["VE-1"])
+  })
+
+  it("uses the same tool completion path for verified, partial, blocked, failed, and research-only states", async () => {
+    const projectRoot = await createProjectRoot()
+    const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
+    const hooks = await OpenUltraCodePlugin({ directory: projectRoot }, { enabled: true, verificationGate: "strict" })
+
+    await store.update(createGateState("pass"))
+    assert.equal((await getCompletionReportTool(hooks).execute({})).status, "verified")
+
+    await store.update(createGateState("not-run"))
+    assert.equal((await getCompletionReportTool(hooks).execute({})).status, "partial")
+
+    await store.update(createGateState("blocked"))
+    assert.equal((await getCompletionReportTool(hooks).execute({})).status, "blocked")
+
+    await store.update(createGateState("fail"))
+    assert.equal((await getCompletionReportTool(hooks).execute({})).status, "failed")
+
+    const researchHooks = await OpenUltraCodePlugin({ directory: projectRoot }, { enabled: true, verificationGate: "disabled" })
+    await store.update({ ...createGateState("pass"), mode: "adversarial-research", criteria: [], verification: [] })
+    assert.equal((await getCompletionReportTool(researchHooks).execute({ researchOnly: true })).status, "research-only")
+  })
 })
 
 async function createProjectRoot(): Promise<string> {
@@ -141,6 +280,86 @@ function getAutocontinueHook(hooks: OpenUltraCodeHooks): () => Promise<string> {
   }
 
   return hook
+}
+
+function getStatusTool(hooks: OpenUltraCodeHooks): WorkflowStatusTool {
+  const tool = hooks.tool?.open_ultracode_status
+  if (tool === undefined) {
+    throw new TypeError("open_ultracode_status tool is missing")
+  }
+
+  return tool
+}
+
+function getRecordVerificationTool(hooks: OpenUltraCodeHooks): RecordVerificationTool {
+  const tool = hooks.tool?.open_ultracode_record_verification
+  if (tool === undefined) {
+    throw new TypeError("open_ultracode_record_verification tool is missing")
+  }
+
+  return tool
+}
+
+function getRecordBlockedCheckTool(hooks: OpenUltraCodeHooks): RecordBlockedCheckTool {
+  const tool = hooks.tool?.open_ultracode_record_blocked_check
+  if (tool === undefined) {
+    throw new TypeError("open_ultracode_record_blocked_check tool is missing")
+  }
+
+  return tool
+}
+
+function getCompletionReportTool(hooks: OpenUltraCodeHooks): CompletionReportTool {
+  const tool = hooks.tool?.open_ultracode_completion_report
+  if (tool === undefined) {
+    throw new TypeError("open_ultracode_completion_report tool is missing")
+  }
+
+  return tool
+}
+
+function createGateState(result: "pass" | "fail" | "not-run" | "blocked"): WorkflowState {
+  const state = createState()
+  const evidence: VerificationEvidence =
+    result === "pass"
+      ? {
+          id: "VE-gate",
+          kind: "test" as const,
+          result,
+          summary: "Gate check passed.",
+          command: "npm test",
+          criteriaIds: ["AC-1"]
+        }
+      : {
+          id: "VE-gate",
+          kind: "test" as const,
+          result,
+          summary: "Gate check did not pass.",
+          command: "npm test",
+          criteriaIds: ["AC-1"],
+          reason: "Gate check was not successful.",
+          residualRisk: "Completion cannot be fully verified."
+        }
+
+  return withoutCompletion({
+    ...state,
+    criteria: [
+      {
+        id: "AC-1",
+        text: "Gate status is classified consistently.",
+        source: "spec",
+        status: "pending",
+        requirementId: "8.4"
+      }
+    ],
+    verification: [evidence]
+  })
+}
+
+function withoutCompletion(state: WorkflowState): WorkflowState {
+  const { completion: _completion, ...rest } = state
+
+  return rest
 }
 
 function createState(): WorkflowState {
