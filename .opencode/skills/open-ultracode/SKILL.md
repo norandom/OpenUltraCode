@@ -60,6 +60,22 @@ Review findings must include:
 - Evidence.
 - Required disposition: accept, reject, mitigate, or defer.
 
+Use this structured review schema when reporting adversarial results:
+
+```md
+## Adversarial Review
+- VERDICT: ship | fix | reject
+- FINDINGS:
+  - ID: <finding ID>
+    SEVERITY: high | medium | low
+    CONFIDENCE: high | medium | low
+    AFFECTED_REQUIREMENT: <requirement ID or unknown>
+    EVIDENCE: <specific evidence>
+    DISPOSITION: open | accepted | rejected
+    REJECTION_REASON: <required when rejected>
+- COMPLETION_RISK: <risk to completion gate>
+```
+
 ### Reconciliation
 
 Resolve adversarial findings explicitly. High- or medium-severity unresolved findings block completion when review is required. Rejected findings need an evidence-based rejection reason.

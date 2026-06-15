@@ -61,4 +61,19 @@ describe("OpenUltraCode skill asset", () => {
       assert.match(content, requiredText)
     }
   })
+
+  it("defines the adversarial review schema expected by workflow assets", () => {
+    const content = readSkill()
+
+    for (const requiredText of [
+      /VERDICT:\s*ship\s*\|\s*fix\s*\|\s*reject/i,
+      /SEVERITY:\s*high\s*\|\s*medium\s*\|\s*low/i,
+      /CONFIDENCE:\s*high\s*\|\s*medium\s*\|\s*low/i,
+      /AFFECTED_REQUIREMENT/i,
+      /DISPOSITION/i,
+      /REJECTION_REASON/i
+    ]) {
+      assert.match(content, requiredText)
+    }
+  })
 })

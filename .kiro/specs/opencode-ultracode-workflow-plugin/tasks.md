@@ -144,7 +144,7 @@
   - Verify plugin disabled behavior, enabled hook registration, compaction summary generation, status tool output, verification evidence recording, blocked permission handling, and completion report classification.
   - Done when tests prove the plugin does not alter selected model configuration and reports blocked or partial states instead of silently completing.
 
-- [ ] 6.4 Test prompt assets against workflow requirements
+- [x] 6.4 Test prompt assets against workflow requirements
   _Boundary: Prompt Asset Tests_
   _Depends: 4.1, 4.2, 4.3, 5.1, 6.1_
   _Requirements: 2.1, 2.2, 2.5, 3.1, 3.2, 3.3, 3.4, 3.5, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 10.2, 11.1, 11.2, 11.3, 11.4, 11.5_
