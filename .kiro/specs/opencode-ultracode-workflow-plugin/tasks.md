@@ -123,7 +123,7 @@
 
 ## 6. Validate Assets And Core Behavior
 
-- [ ] 6.1 Add asset validation for opencode compatibility
+- [x] 6.1 Add asset validation for opencode compatibility
   _Boundary: Asset Validation_
   _Depends: 4.1, 4.2, 4.3_
   _Requirements: 1.1, 1.4, 1.5, 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 12.1_
