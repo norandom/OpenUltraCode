@@ -130,7 +130,7 @@
   - Implement validation for required skill, command, agent, and plugin assets, valid frontmatter, command names, missing model overrides, and permission constraints.
   - Done when the validation script fails on missing assets, invalid frontmatter, hardcoded model fields, or unsafe permissions.
 
-- [ ] 6.2 Test configuration, state, degradation, verification, and high-effort behavior
+- [x] 6.2 Test configuration, state, degradation, verification, and high-effort behavior
   _Boundary: Core Tests_
   _Depends: 1.3, 2.1, 2.2, 2.3, 3.4_
   _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 8.1, 8.2, 8.3, 8.4, 8.5, 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 10.1, 10.3, 12.4_

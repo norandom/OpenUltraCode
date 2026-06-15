@@ -86,6 +86,18 @@ describe("verification completion gates", () => {
     assert(report.unresolvedRisks.some((risk) => risk.includes("No acceptance criteria or verification evidence were provided.")))
   })
 
+  it("does not verify strict completion when evidence is not tied to acceptance criteria", () => {
+    const report = evaluateCompletionGate({
+      policy: "strict",
+      criteria: [],
+      evidence: [passingEvidence("VE-1", [])]
+    })
+
+    assert.equal(report.status, "partial")
+    assert.match(report.summary, /missing evidence/i)
+    assert(report.unresolvedRisks.some((risk) => risk.includes("No acceptance criteria were provided.")))
+  })
+
   it("reports failed and blocked outcomes without overclaiming completion", () => {
     const failed = evaluateCompletionGate({
       policy: "strict",

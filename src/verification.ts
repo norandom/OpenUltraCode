@@ -23,14 +23,40 @@ export function evaluateCompletionGate(input: CompletionGateInput): CompletionRe
   const missingCriterionIds = applicableCriteria
     .filter((criterion) => !input.evidence.some((evidence) => evidence.result === "pass" && evidence.criteriaIds.includes(criterion.id)))
     .map((criterion) => criterion.id)
-  const hasNoGateEvidence = applicableCriteria.length === 0 && input.evidence.length === 0
-  const unresolvedRisks = collectUnresolvedRisks(input.criteria, input.evidence, missingCriterionIds, input.policy, hasNoGateEvidence)
-  const status = classifyCompletion(input.policy, input.researchOnly === true, missingCriterionIds, failed, blocked, notRun, hasNoGateEvidence)
+  const hasNoApplicableCriteria = applicableCriteria.length === 0
+  const hasNoGateEvidence = hasNoApplicableCriteria && input.evidence.length === 0
+  const unresolvedRisks = collectUnresolvedRisks(
+    input.criteria,
+    input.evidence,
+    missingCriterionIds,
+    input.policy,
+    hasNoApplicableCriteria,
+    hasNoGateEvidence
+  )
+  const status = classifyCompletion(
+    input.policy,
+    input.researchOnly === true,
+    missingCriterionIds,
+    failed,
+    blocked,
+    notRun,
+    hasNoApplicableCriteria,
+    hasNoGateEvidence
+  )
   const criteria = input.criteria.map((criterion) => classifyCriterion(criterion, input.evidence))
 
   return {
     status,
-    summary: summarizeCompletion(status, input.policy, missingCriterionIds, failed, blocked, notRun, hasNoGateEvidence),
+    summary: summarizeCompletion(
+      status,
+      input.policy,
+      missingCriterionIds,
+      failed,
+      blocked,
+      notRun,
+      hasNoApplicableCriteria,
+      hasNoGateEvidence
+    ),
     criteria,
     unresolvedRisks,
     verificationIds: input.evidence.map((evidence) => evidence.id),
@@ -46,6 +72,7 @@ function classifyCompletion(
   failed: readonly VerificationEvidence[],
   blocked: readonly VerificationEvidence[],
   notRun: readonly VerificationEvidence[],
+  hasNoApplicableCriteria: boolean,
   hasNoGateEvidence: boolean
 ): CompletionStatus {
   if (researchOnly && policy === "disabled") {
@@ -65,6 +92,10 @@ function classifyCompletion(
   }
 
   if (hasNoGateEvidence) {
+    return "partial"
+  }
+
+  if (hasNoApplicableCriteria) {
     return "partial"
   }
 
@@ -94,6 +125,7 @@ function collectUnresolvedRisks(
   evidence: readonly VerificationEvidence[],
   missingCriterionIds: readonly string[],
   policy: GatePolicy,
+  hasNoApplicableCriteria: boolean,
   hasNoGateEvidence: boolean
 ): readonly string[] {
   const risks: string[] = []
@@ -122,6 +154,8 @@ function collectUnresolvedRisks(
     risks.push("No verification evidence was collected because the gate is disabled.")
   } else if (hasNoGateEvidence) {
     risks.push("No acceptance criteria or verification evidence were provided.")
+  } else if (hasNoApplicableCriteria) {
+    risks.push("No acceptance criteria were provided.")
   }
 
   return Array.from(new Set(risks))
@@ -134,10 +168,14 @@ function summarizeCompletion(
   failed: readonly VerificationEvidence[],
   blocked: readonly VerificationEvidence[],
   notRun: readonly VerificationEvidence[],
+  hasNoApplicableCriteria: boolean,
   hasNoGateEvidence: boolean
 ): string {
   const details = [
-    formatDetail("missing evidence", hasNoGateEvidence ? ["workflow verification"] : missingCriterionIds),
+    formatDetail(
+      "missing evidence",
+      hasNoGateEvidence ? ["workflow verification"] : hasNoApplicableCriteria ? ["acceptance criteria"] : missingCriterionIds
+    ),
     formatDetail("failed checks", failed.map((item) => item.id)),
     formatDetail("blocked checks", blocked.map((item) => item.id)),
     formatDetail("not-run checks", notRun.map((item) => item.id))

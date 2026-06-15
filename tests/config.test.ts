@@ -116,4 +116,15 @@ describe("OpenUltraCode configuration", () => {
       "notices must be an object when provided"
     ])
   })
+
+  it("rejects transcript persistence instead of weakening local-state defaults", () => {
+    const parsed = parseOpenUltraCodeOptions({
+      state: {
+        persistTranscripts: true
+      }
+    })
+
+    assert.equal(parsed.ok, false)
+    assert.deepEqual(parsed.errors, ["state.persistTranscripts must be false; transcript persistence is not implemented"])
+  })
 })
