@@ -137,7 +137,7 @@
   - Cover valid and invalid configuration, project-local state persistence, degradation messages, strict/advisory/disabled verification gates, and supported or unsupported high-effort request behavior.
   - Done when unit tests fail for unsafe defaults, state writes outside the project, hidden high-effort claims, missing evidence, or unclear degraded-mode messages.
 
-- [ ] 6.3 Test plugin hooks and workflow tools
+- [x] 6.3 Test plugin hooks and workflow tools
   _Boundary: Plugin Tests_
   _Depends: 3.1, 3.2, 3.3, 3.5_
   _Requirements: 2.3, 2.4, 8.1, 8.2, 8.3, 8.4, 8.5, 9.6, 10.1, 10.3, 10.5, 12.1, 12.2_

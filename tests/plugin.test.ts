@@ -261,6 +261,19 @@ describe("OpenUltraCode plugin entry point", () => {
     assert.equal((await getCompletionReportTool(researchHooks).execute({ researchOnly: true })).status, "research-only")
   })
 
+  it("reports partial completion instead of crashing when completion tool input is omitted", async () => {
+    const projectRoot = await createProjectRoot()
+    const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
+    await store.update(createGateState("not-run"))
+    const hooks = await OpenUltraCodePlugin({ directory: projectRoot }, { enabled: true, verificationGate: "strict" })
+
+    const report = await getCompletionReportTool(hooks).execute()
+
+    assert.equal(report.status, "partial")
+    assert.match(report.summary, /not-run checks/i)
+    assert(report.unresolvedRisks.some((risk) => risk.includes("VE-gate was not run")))
+  })
+
   it("applies high-effort hints only to supported request fields", async () => {
     const hooks = await OpenUltraCodePlugin(
       { directory: await createProjectRoot() },
