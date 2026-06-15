@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import { describe, it } from "node:test"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
@@ -33,6 +33,26 @@ describe("OpenUltraCode scaffold", () => {
     assert.equal(result.ok, true, result.errors.join("\n"))
   })
 
+  it("exposes an installable opencode project layout without model routing", () => {
+    const config = readJson(join(projectRoot, "opencode.json"))
+    const manifest = readJson(join(projectRoot, "package.json"))
+
+    assert.equal(config.$schema, "https://opencode.ai/config.json")
+    assert.deepEqual(config.plugin, ["./.opencode/plugins/open-ultracode.ts"])
+    assert.deepEqual(config.skills, { paths: [".opencode/skills"] })
+    assert.equal("model" in config, false)
+    assert.equal("provider" in config, false)
+
+    assert.deepEqual(manifest.files, [
+      ".opencode",
+      "src",
+      "docs",
+      "scripts/validate-assets.ts",
+      "README.md",
+      "opencode.json"
+    ])
+  })
+
   it("rejects missing required opencode assets", () => {
     const root = createAssetFixture()
     writeFileSync(join(root, ".opencode/skills/open-ultracode/SKILL.md"), "")
@@ -41,6 +61,16 @@ describe("OpenUltraCode scaffold", () => {
 
     assert.equal(result.ok, false)
     assert.match(result.errors.join("\n"), /open-ultracode\/SKILL\.md.*frontmatter/i)
+  })
+
+  it("rejects a missing project opencode configuration", () => {
+    const root = createAssetFixture()
+    unlinkSync(join(root, "opencode.json"))
+
+    const result = validateAssets(root)
+
+    assert.equal(result.ok, false)
+    assert.match(result.errors.join("\n"), /opencode\.json is missing/i)
   })
 
   it("rejects hardcoded model fields in command and agent assets", () => {
@@ -100,8 +130,17 @@ function createAssetFixture(): string {
     mkdirSync(join(root, relativePath), { recursive: true })
   }
 
-  writeFileSync(join(root, "package.json"), "{}\n")
+  writeFileSync(join(root, "package.json"), JSON.stringify({ files: [".opencode", "src", "docs", "scripts/validate-assets.ts", "README.md", "opencode.json"] }))
+  writeFileSync(
+    join(root, "opencode.json"),
+    JSON.stringify({
+      $schema: "https://opencode.ai/config.json",
+      plugin: ["./.opencode/plugins/open-ultracode.ts"],
+      skills: { paths: [".opencode/skills"] }
+    })
+  )
   writeFileSync(join(root, "tsconfig.json"), "{}\n")
+  writeFileSync(join(root, "README.md"), "# OpenUltraCode\n")
   writeFileSync(join(root, "scripts/validate-assets.ts"), "")
 
   writeFileSync(join(root, ".opencode/plugins/open-ultracode.ts"), "export default async () => ({})\n")
@@ -166,4 +205,8 @@ ${permission}
 
 Inherit the active selected model. Do not change provider. Return structured output.
 `
+}
+
+function readJson(path: string): Record<string, unknown> {
+  return JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>
 }

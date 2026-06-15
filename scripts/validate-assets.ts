@@ -14,6 +14,7 @@ interface FrontmatterDocument {
 
 const requiredScaffoldPaths = [
   "package.json",
+  "opencode.json",
   "tsconfig.json",
   "src",
   ".opencode/plugins",
@@ -54,11 +55,34 @@ export function validateAssets(root = process.cwd()): AssetValidationResult {
   }
 
   validatePlugin(root, errors)
+  validateOpenCodeConfig(root, errors)
   validateSkill(root, errors)
   validateCommands(root, errors)
   validateAgents(root, errors)
 
   return { ok: errors.length === 0, errors }
+}
+
+function validateOpenCodeConfig(root: string, errors: string[]): void {
+  const relativePath = "opencode.json"
+  const content = readAsset(root, relativePath, errors)
+  if (content === undefined) return
+
+  const config = readJsonObject(relativePath, content, errors)
+  if (config === undefined) return
+
+  if (config.$schema !== "https://opencode.ai/config.json") {
+    errors.push(`${relativePath} must declare https://opencode.ai/config.json schema`)
+  }
+  if (!arrayEquals(config.plugin, ["./.opencode/plugins/open-ultracode.ts"])) {
+    errors.push(`${relativePath} must register ./.opencode/plugins/open-ultracode.ts`)
+  }
+  if (!isRecord(config.skills) || !arrayEquals(config.skills.paths, [".opencode/skills"])) {
+    errors.push(`${relativePath} must register .opencode/skills in skills.paths`)
+  }
+  if ("model" in config || "provider" in config) {
+    errors.push(`${relativePath} must not configure model or provider routing`)
+  }
 }
 
 function validatePlugin(root: string, errors: string[]): void {
@@ -216,6 +240,27 @@ function requireBody(relativePath: string, body: string, patterns: readonly RegE
       errors.push(`${relativePath} body is missing required guidance matching ${pattern}`)
     }
   }
+}
+
+function readJsonObject(relativePath: string, content: string, errors: string[]): Record<string, unknown> | undefined {
+  try {
+    const parsed = JSON.parse(content) as unknown
+    if (isRecord(parsed)) {
+      return parsed
+    }
+    errors.push(`${relativePath} must contain a JSON object`)
+  } catch (error) {
+    errors.push(`${relativePath} must contain valid JSON: ${error instanceof Error ? error.message : String(error)}`)
+  }
+  return undefined
+}
+
+function arrayEquals(value: unknown, expected: readonly string[]): boolean {
+  return Array.isArray(value) && value.length === expected.length && value.every((item, index) => item === expected[index])
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 if (isDirectExecution()) {
