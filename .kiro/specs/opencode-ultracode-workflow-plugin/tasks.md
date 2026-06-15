@@ -38,7 +38,7 @@
   - Add helpers that turn unsupported capabilities, unavailable multi-agent execution, failed phases, permission denials, and high-effort limitations into clear user-facing notices with safe next actions.
   - Done when callers can distinguish active, degraded, blocked, and disabled workflow states with consistent messages.
 
-- [ ] 2.3 Implement verification and completion gate logic
+- [x] 2.3 Implement verification and completion gate logic
   _Boundary: Verification Core_
   _Depends: 1.2, 2.1_
   _Requirements: 2.4, 8.1, 8.2, 8.3, 8.4, 8.5, 10.5_
