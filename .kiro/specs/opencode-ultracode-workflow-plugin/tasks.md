@@ -31,7 +31,7 @@
   - Persist minimal workflow state under the project-local open-ultracode state directory, including active mode, phase, assumptions, findings, verification evidence, degradation notices, and completion status.
   - Done when state can be loaded, updated, cleared, and safely recovered from a missing or corrupt state file without writing outside the project directory.
 
-- [ ] 2.2 Implement degradation and phase reporting helpers
+- [x] 2.2 Implement degradation and phase reporting helpers
   _Boundary: Degradation Core_
   _Depends: 1.2, 1.3_
   _Requirements: 1.3, 7.3, 10.1, 10.2, 10.3_
