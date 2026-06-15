@@ -24,7 +24,7 @@
 
 ## 2. Build Runtime State, Gates, And Degradation Logic
 
-- [ ] 2.1 Implement project-local workflow state storage
+- [x] 2.1 Implement project-local workflow state storage
   _Boundary: State Store_
   _Depends: 1.2_
   _Requirements: 2.3, 8.1, 8.4, 12.4_
