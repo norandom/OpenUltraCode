@@ -98,7 +98,7 @@
   - Write the skill that teaches task intake, decomposition, role sequencing, assumption tracking, verification discipline, debug loops, spec-audit loops, and incomplete-spec handling.
   - Done when the skill has valid frontmatter, clear trigger guidance, explicit workflow phases, and fallback behavior for single-session execution.
 
-- [ ] 4.2 (P) Create the workflow slash commands
+- [x] 4.2 (P) Create the workflow slash commands
   _Boundary: Command Prompt Assets_
   _Depends: 1.1_
   _Requirements: 3.2, 3.3, 5.1, 5.2, 5.3, 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 8.1, 8.2, 8.3, 8.4, 8.5, 10.2_
