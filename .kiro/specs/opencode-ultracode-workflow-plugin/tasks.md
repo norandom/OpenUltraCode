@@ -61,7 +61,7 @@
   - Export an opencode-compatible plugin function that loads typed options, initializes state access, and returns no operational hooks when disabled.
   - Done when the plugin can be loaded by opencode in enabled and disabled modes without changing the selected provider or model.
 
-- [ ] 3.2 Add session continuity and compaction hooks
+- [x] 3.2 Add session continuity and compaction hooks
   _Boundary: Plugin Runtime_
   _Depends: 2.1, 2.2, 3.1_
   _Requirements: 2.3, 4.6, 10.1, 12.4_
