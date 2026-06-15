@@ -61,6 +61,8 @@ describe("OpenUltraCode plugin entry point", () => {
 
     assert.equal(typeof hooks["experimental.session.compacting"], "function")
     assert.equal(typeof hooks["experimental.compaction.autocontinue"], "function")
+    assert.equal(typeof hooks["permission.ask"], "function")
+    assert.equal(typeof hooks["tool.execute.after"], "function")
     assert.equal(typeof hooks.tool?.open_ultracode_status?.execute, "function")
     assert.equal(typeof hooks.tool?.open_ultracode_record_verification?.execute, "function")
     assert.equal(typeof hooks.tool?.open_ultracode_record_blocked_check?.execute, "function")
@@ -312,6 +314,56 @@ describe("OpenUltraCode plugin entry point", () => {
       reasoning_effort: "medium"
     })
   })
+
+  it("records permission denials as blocked workflow status with safe next action", async () => {
+    const projectRoot = await createProjectRoot()
+    const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
+    await store.update({ ...createState(), phase: "execution" })
+    const hooks = await OpenUltraCodePlugin({ directory: projectRoot }, { enabled: true })
+
+    await getPermissionAskHook(hooks)(
+      { operation: "edit src/index.ts" },
+      { action: "deny", reason: "file edit was denied by opencode permissions" }
+    )
+    const status = await getStatusTool(hooks).execute({})
+
+    assert.equal(status.phase, "blocked")
+    assert.deepEqual(status.degradations, ["D-1", "permission-denied-edit-src-index-ts"])
+    assert.deepEqual(status.degradationDetails.at(-1), {
+      id: "permission-denied-edit-src-index-ts",
+      capability: "permission for edit src/index.ts",
+      severity: "blocked",
+      reason: "file edit was denied by opencode permissions",
+      safeNextAction:
+        "Respect the permission denial; ask the user to approve edit src/index.ts or choose a permitted alternative before retrying.",
+      phase: "execution"
+    })
+  })
+
+  it("records tool failures as blocked workflow status with affected phase", async () => {
+    const projectRoot = await createProjectRoot()
+    const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
+    await store.update({ ...createState(), phase: "verification" })
+    const hooks = await OpenUltraCodePlugin({ directory: projectRoot }, { enabled: true })
+
+    await getToolExecuteAfterHook(hooks)(
+      { tool: "bash", phase: "verification" },
+      { status: "error", error: "npm test failed" }
+    )
+    const status = await getStatusTool(hooks).execute({})
+
+    assert.equal(status.phase, "blocked")
+    assert.deepEqual(status.degradations, ["D-1", "phase-verification-failed"])
+    assert.deepEqual(status.degradationDetails.at(-1), {
+      id: "phase-verification-failed",
+      capability: "workflow phase verification",
+      severity: "blocked",
+      reason: "bash failed: npm test failed",
+      safeNextAction:
+        "Stop the workflow at verification, fix or explicitly accept the issue, then rerun the phase before reporting completion.",
+      phase: "verification"
+    })
+  })
 })
 
 async function createProjectRoot(): Promise<string> {
@@ -376,6 +428,24 @@ function getChatParamsHook(hooks: OpenUltraCodeHooks): (input: unknown, output: 
   const hook = hooks["chat.params"]
   if (typeof hook !== "function") {
     throw new TypeError("chat.params hook is missing")
+  }
+
+  return hook
+}
+
+function getPermissionAskHook(hooks: OpenUltraCodeHooks): (input: unknown, output: Record<string, unknown>) => Promise<void> {
+  const hook = hooks["permission.ask"]
+  if (typeof hook !== "function") {
+    throw new TypeError("permission.ask hook is missing")
+  }
+
+  return hook
+}
+
+function getToolExecuteAfterHook(hooks: OpenUltraCodeHooks): (input: unknown, output: Record<string, unknown>) => Promise<void> {
+  const hook = hooks["tool.execute.after"]
+  if (typeof hook !== "function") {
+    throw new TypeError("tool.execute.after hook is missing")
   }
 
   return hook

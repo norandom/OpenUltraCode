@@ -8,8 +8,18 @@ export interface WorkflowStatusToolResult {
   readonly goal?: string
   readonly completion?: CompletionReport
   readonly degradations: readonly string[]
+  readonly degradationDetails: readonly WorkflowStatusDegradation[]
   readonly openFindings: readonly string[]
   readonly verification: readonly string[]
+}
+
+export interface WorkflowStatusDegradation {
+  readonly id: string
+  readonly capability: string
+  readonly severity: DegradationNotice["severity"]
+  readonly reason: string
+  readonly safeNextAction: string
+  readonly phase?: WorkflowState["phase"]
 }
 
 export interface WorkflowStatusTool {
@@ -31,6 +41,7 @@ export function createWorkflowStatusTool(
         return {
           active: false,
           degradations: degradations.map((notice) => notice.id),
+          degradationDetails: degradations.map(formatDegradationDetail),
           openFindings: [],
           verification: []
         }
@@ -49,8 +60,20 @@ function summarizeState(state: WorkflowState, degradations: readonly Degradation
     ...(state.goal === undefined ? {} : { goal: state.goal }),
     ...(state.completion === undefined ? {} : { completion: state.completion }),
     degradations: degradations.map((notice) => notice.id),
+    degradationDetails: degradations.map(formatDegradationDetail),
     openFindings: state.findings.filter(isOpenFinding).map((finding) => finding.id),
     verification: state.verification.map(formatVerificationEvidence)
+  }
+}
+
+function formatDegradationDetail(notice: DegradationNotice): WorkflowStatusDegradation {
+  return {
+    id: notice.id,
+    capability: notice.capability,
+    severity: notice.severity,
+    reason: notice.reason,
+    safeNextAction: notice.safeNextAction,
+    ...(notice.phase === undefined ? {} : { phase: notice.phase })
   }
 }
 

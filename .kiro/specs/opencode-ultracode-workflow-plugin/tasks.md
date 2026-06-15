@@ -82,7 +82,7 @@
   - Apply supported request parameter hints for deeper reasoning, larger output budget, or equivalent provider-supported behavior without claiming hidden reasoning or bypassing provider limits.
   - Done when supported models receive only supported controls, unsupported models produce visible degradation notices, and disabled high-effort mode performs no request mutation.
 
-- [ ] 3.5 Observe tool and permission failures safely
+- [x] 3.5 Observe tool and permission failures safely
   _Boundary: Plugin Runtime_
   _Depends: 2.2, 3.1_
   _Requirements: 10.3, 12.1, 12.2_

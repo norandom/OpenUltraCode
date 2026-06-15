@@ -1,4 +1,8 @@
-import type { DegradationNotice, Finding, OpenUltraCodeOptions, VerificationEvidence, WorkflowState } from "./types.js"
+import {
+  createFailedPhaseNotice,
+  createPermissionDeniedNotice
+} from "./degradation.js"
+import { workflowPhases, type DegradationNotice, type Finding, type OpenUltraCodeOptions, type VerificationEvidence, type WorkflowPhase, type WorkflowState } from "./types.js"
 import type { WorkflowStateStore } from "./state.js"
 import { applyHighEffortRequestBehavior, type ChatParams } from "./high-effort.js"
 import { createWorkflowStatusTool, type WorkflowStatusTool } from "./status-tool.js"
@@ -17,6 +21,8 @@ export interface OpenCodePluginInput {
 
 export interface OpenUltraCodeHooks {
   readonly "chat.params"?: (input: unknown, output: ChatParams) => Promise<void>
+  readonly "permission.ask"?: (input: unknown, output: Record<string, unknown>) => Promise<void>
+  readonly "tool.execute.after"?: (input: unknown, output: Record<string, unknown>) => Promise<void>
   readonly "experimental.session.compacting"?: () => Promise<string>
   readonly "experimental.compaction.autocontinue"?: () => Promise<string>
   readonly tool?: OpenUltraCodeTools
@@ -40,6 +46,8 @@ export function createOpenUltraCodeHooks(
 
   return {
     "chat.params": async (_input, output) => applyHighEffortHints(config, stateStore, output),
+    "permission.ask": async (input, output) => observePermissionDecision(stateStore, input, output),
+    "tool.execute.after": async (input, output) => observeToolExecution(stateStore, input, output),
     "experimental.session.compacting": async () => createCompactionContext(await stateStore.load()),
     "experimental.compaction.autocontinue": async () => createCompactionContext(await stateStore.load()),
     tool: {
@@ -49,6 +57,66 @@ export function createOpenUltraCodeHooks(
       open_ultracode_completion_report: createCompletionReportTool(config, stateStore)
     }
   }
+}
+
+async function observePermissionDecision(
+  stateStore: WorkflowStateStore,
+  input: unknown,
+  output: Record<string, unknown>
+): Promise<void> {
+  if (!isDeniedPermission(output)) {
+    return
+  }
+
+  const loaded = await stateStore.load()
+  if (loaded.state === undefined) {
+    return
+  }
+
+  const operation = readString(input, "operation") ?? readString(output, "operation") ?? "unknown operation"
+  const reason = readString(output, "reason") ?? readString(input, "reason") ?? "permission was denied"
+  const phase = readWorkflowPhase(input, "phase") ?? loaded.state.phase
+  const notice = createPermissionDeniedNotice({ operation, reason, phase })
+
+  await blockWorkflow(stateStore, loaded.state, notice)
+}
+
+async function observeToolExecution(
+  stateStore: WorkflowStateStore,
+  input: unknown,
+  output: Record<string, unknown>
+): Promise<void> {
+  const failureReason = readToolFailureReason(output)
+  if (failureReason === undefined) {
+    return
+  }
+
+  const loaded = await stateStore.load()
+  if (loaded.state === undefined) {
+    return
+  }
+
+  const tool = readString(input, "tool") ?? readString(input, "toolName") ?? readString(output, "tool") ?? "tool"
+  const phase = readWorkflowPhase(input, "phase") ?? readWorkflowPhase(output, "phase") ?? loaded.state.phase
+  const notice = createFailedPhaseNotice({
+    phase,
+    reason: `${tool} failed: ${failureReason}`
+  })
+
+  await blockWorkflow(stateStore, loaded.state, notice)
+}
+
+async function blockWorkflow(
+  stateStore: WorkflowStateStore,
+  state: WorkflowState,
+  notice: DegradationNotice
+): Promise<void> {
+  await stateStore.update({
+    ...state,
+    phase: "blocked",
+    updatedAt: notice.occurredAt,
+    degradations: replaceDegradation(state.degradations, notice)
+  })
 }
 
 async function applyHighEffortHints(
@@ -78,6 +146,48 @@ function replaceDegradation(
   degradation: DegradationNotice
 ): readonly DegradationNotice[] {
   return [...degradations.filter((existing) => existing.id !== degradation.id), degradation]
+}
+
+function isDeniedPermission(output: Record<string, unknown>): boolean {
+  const decision = readString(output, "action") ?? readString(output, "status") ?? readString(output, "decision")
+
+  return decision === "deny" || decision === "denied" || decision === "reject" || decision === "rejected"
+}
+
+function readToolFailureReason(output: Record<string, unknown>): string | undefined {
+  const error = output.error
+  if (error instanceof Error) {
+    return error.message
+  }
+  if (typeof error === "string" && error.length > 0) {
+    return error
+  }
+
+  const status = readString(output, "status") ?? readString(output, "result")
+  if (status !== "error" && status !== "failed" && status !== "fail") {
+    return undefined
+  }
+
+  return readString(output, "reason") ?? readString(output, "message") ?? "tool execution failed"
+}
+
+function readString(value: unknown, field: string): string | undefined {
+  if (!isRecord(value)) {
+    return undefined
+  }
+
+  const result = value[field]
+  return typeof result === "string" && result.length > 0 ? result : undefined
+}
+
+function readWorkflowPhase(value: unknown, field: string): WorkflowPhase | undefined {
+  const phase = readString(value, field)
+
+  return phase !== undefined && workflowPhases.includes(phase as WorkflowPhase) ? (phase as WorkflowPhase) : undefined
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 interface WorkflowStateLoadSnapshot {
