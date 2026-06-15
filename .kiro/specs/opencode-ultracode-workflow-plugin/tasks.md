@@ -45,7 +45,7 @@
   - Evaluate strict, advisory, and disabled gate policies against acceptance criteria, verification evidence, failed checks, skipped checks, and blocked checks.
   - Done when completion reports accurately classify verified, partial, blocked, failed, and research-only outcomes and explain what evidence is missing.
 
-- [ ] 2.4 Implement adversarial finding reconciliation logic
+- [x] 2.4 Implement adversarial finding reconciliation logic
   _Boundary: Adversarial Core_
   _Depends: 1.2_
   _Requirements: 4.4, 4.5, 5.4, 5.5, 5.6, 10.4_
