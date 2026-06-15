@@ -1,5 +1,6 @@
 import type { DegradationNotice, Finding, OpenUltraCodeOptions, VerificationEvidence, WorkflowState } from "./types.js"
 import type { WorkflowStateStore } from "./state.js"
+import { applyHighEffortRequestBehavior, type ChatParams } from "./high-effort.js"
 import { createWorkflowStatusTool, type WorkflowStatusTool } from "./status-tool.js"
 import {
   createCompletionReportTool,
@@ -15,6 +16,7 @@ export interface OpenCodePluginInput {
 }
 
 export interface OpenUltraCodeHooks {
+  readonly "chat.params"?: (input: unknown, output: ChatParams) => Promise<void>
   readonly "experimental.session.compacting"?: () => Promise<string>
   readonly "experimental.compaction.autocontinue"?: () => Promise<string>
   readonly tool?: OpenUltraCodeTools
@@ -37,6 +39,7 @@ export function createOpenUltraCodeHooks(
   }
 
   return {
+    "chat.params": async (_input, output) => applyHighEffortHints(config, stateStore, output),
     "experimental.session.compacting": async () => createCompactionContext(await stateStore.load()),
     "experimental.compaction.autocontinue": async () => createCompactionContext(await stateStore.load()),
     tool: {
@@ -46,6 +49,35 @@ export function createOpenUltraCodeHooks(
       open_ultracode_completion_report: createCompletionReportTool(config, stateStore)
     }
   }
+}
+
+async function applyHighEffortHints(
+  config: OpenUltraCodeOptions,
+  stateStore: WorkflowStateStore,
+  output: ChatParams
+): Promise<void> {
+  const result = applyHighEffortRequestBehavior(config.highEffort, output)
+  if (result.degradation === undefined || !config.notices.showDegradation) {
+    return
+  }
+
+  const loaded = await stateStore.load()
+  if (loaded.state === undefined) {
+    return
+  }
+
+  await stateStore.update({
+    ...loaded.state,
+    updatedAt: result.degradation.occurredAt,
+    degradations: replaceDegradation(loaded.state.degradations, result.degradation)
+  })
+}
+
+function replaceDegradation(
+  degradations: readonly DegradationNotice[],
+  degradation: DegradationNotice
+): readonly DegradationNotice[] {
+  return [...degradations.filter((existing) => existing.id !== degradation.id), degradation]
 }
 
 interface WorkflowStateLoadSnapshot {

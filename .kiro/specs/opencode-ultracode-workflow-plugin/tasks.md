@@ -75,7 +75,7 @@
   - Provide plugin tools for reading workflow status, recording verification evidence, recording blocked checks, and producing completion reports.
   - Done when the tools report verified, partial, blocked, failed, and research-only states using the same gate logic as the runtime.
 
-- [ ] 3.4 Implement best-effort high-effort request behavior
+- [x] 3.4 Implement best-effort high-effort request behavior
   _Boundary: High-Effort Adapter_
   _Depends: 1.3, 2.2, 3.1_
   _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 11.5_

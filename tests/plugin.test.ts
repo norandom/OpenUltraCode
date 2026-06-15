@@ -258,6 +258,60 @@ describe("OpenUltraCode plugin entry point", () => {
     await store.update({ ...createGateState("pass"), mode: "adversarial-research", criteria: [], verification: [] })
     assert.equal((await getCompletionReportTool(researchHooks).execute({ researchOnly: true })).status, "research-only")
   })
+
+  it("applies high-effort hints only to supported request fields", async () => {
+    const hooks = await OpenUltraCodePlugin(
+      { directory: await createProjectRoot() },
+      { enabled: true, highEffort: { enabled: true, effort: "high", outputTokens: 128000 } }
+    )
+    const params = {
+      max_tokens: 4096,
+      reasoning_effort: "medium"
+    }
+
+    await getChatParamsHook(hooks)({}, params)
+
+    assert.deepEqual(params, {
+      max_tokens: 128000,
+      reasoning_effort: "high"
+    })
+  })
+
+  it("does not invent unsupported high-effort request fields", async () => {
+    const projectRoot = await createProjectRoot()
+    const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
+    await store.update(createState())
+    const hooks = await OpenUltraCodePlugin(
+      { directory: projectRoot },
+      { enabled: true, highEffort: { enabled: true, effort: "xhigh", outputTokens: 128000 } }
+    )
+    const params = { temperature: 0.2 }
+
+    await getChatParamsHook(hooks)({}, params)
+    const loaded = await store.load()
+
+    assert.deepEqual(params, { temperature: 0.2 })
+    assert.equal(loaded.state?.degradations.at(-1)?.id, "high-effort-limitation")
+    assert.match(loaded.state?.degradations.at(-1)?.reason ?? "", /no supported request fields/i)
+  })
+
+  it("does not mutate request params when high-effort mode is disabled", async () => {
+    const hooks = await OpenUltraCodePlugin(
+      { directory: await createProjectRoot() },
+      { enabled: true, highEffort: { enabled: false, effort: "xhigh", outputTokens: 128000 } }
+    )
+    const params = {
+      max_tokens: 4096,
+      reasoning_effort: "medium"
+    }
+
+    await getChatParamsHook(hooks)({}, params)
+
+    assert.deepEqual(params, {
+      max_tokens: 4096,
+      reasoning_effort: "medium"
+    })
+  })
 })
 
 async function createProjectRoot(): Promise<string> {
@@ -316,6 +370,15 @@ function getCompletionReportTool(hooks: OpenUltraCodeHooks): CompletionReportToo
   }
 
   return tool
+}
+
+function getChatParamsHook(hooks: OpenUltraCodeHooks): (input: unknown, output: Record<string, unknown>) => Promise<void> {
+  const hook = hooks["chat.params"]
+  if (typeof hook !== "function") {
+    throw new TypeError("chat.params hook is missing")
+  }
+
+  return hook
 }
 
 function createGateState(result: "pass" | "fail" | "not-run" | "blocked"): WorkflowState {
