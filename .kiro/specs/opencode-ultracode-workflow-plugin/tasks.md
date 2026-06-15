@@ -160,7 +160,7 @@
   - Connect the plugin entry point, source modules, skill, commands, agents, validation script, and documentation into the project-local opencode package layout.
   - Done when installing or copying the package assets makes the skill, commands, agents, and plugin discoverable without adding a proxy or replacing the selected model.
 
-- [ ] 7.2 Run end-to-end workflow readiness validation
+- [x] 7.2 Run end-to-end workflow readiness validation
   _Boundary: End-To-End Validation_
   _Depends: 6.1, 6.2, 6.3, 6.4, 7.1_
   _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 7.3, 7.5, 8.1, 8.2, 8.3, 8.4, 8.5, 10.2, 10.4, 10.5, 12.1, 12.2, 12.3, 12.4, 12.5_

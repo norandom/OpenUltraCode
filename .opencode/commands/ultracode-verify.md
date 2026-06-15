@@ -14,6 +14,8 @@ $ARGUMENTS
 
 Keep the current selected model. Do not introduce a proxy, synthetic model ID, provider route, or model switch.
 
+If role dispatch is unavailable, use the single-session fallback and keep the same verification phases visible in order.
+
 If `$ARGUMENTS` does not provide enough task context, ask focused questions for the missing completion claim, acceptance criteria, evidence, constraints, or verification target before proceeding.
 
 Expected phases:
