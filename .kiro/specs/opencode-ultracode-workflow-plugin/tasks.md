@@ -54,7 +54,7 @@
 
 ## 3. Implement The Plugin Runtime
 
-- [ ] 3.1 Create the plugin entry point and hook factory
+- [x] 3.1 Create the plugin entry point and hook factory
   _Boundary: Plugin Runtime_
   _Depends: 1.3, 2.1_
   _Requirements: 9.1, 9.6, 12.1_
