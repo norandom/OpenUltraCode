@@ -105,7 +105,7 @@
   - Add commands for comprehensive work, debug, spec audit, adversarial research, and verification, each routing the user's arguments into the right workflow mode.
   - Done when each command has valid frontmatter, accepts `$ARGUMENTS`, names its expected phases, and does not hardcode or override the selected model.
 
-- [ ] 4.3 (P) Create role agent prompts and permissions
+- [x] 4.3 (P) Create role agent prompts and permissions
   _Boundary: Agent Prompt Assets_
   _Depends: 1.1_
   _Requirements: 1.1, 1.4, 1.5, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 5.1, 5.2, 5.3, 5.4, 5.5, 5.6, 12.1, 12.2_
