@@ -114,7 +114,7 @@
 
 ## 5. Add User-Facing Documentation Assets
 
-- [ ] 5.1 Create onboarding, concepts, limits, and configuration documentation
+- [x] 5.1 Create onboarding, concepts, limits, and configuration documentation
   _Boundary: Documentation Assets_
   _Depends: 1.1, 1.3_
   _Requirements: 1.2, 1.3, 7.4, 11.1, 11.2, 11.3, 11.4, 11.5, 12.3, 12.4, 12.5_
