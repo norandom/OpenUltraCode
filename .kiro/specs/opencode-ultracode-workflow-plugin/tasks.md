@@ -15,7 +15,7 @@
   - Add strongly typed contracts for workflow modes, phases, gate policies, adversarial policies, findings, finding dispositions, acceptance criteria, verification evidence, degradation notices, completion reports, and persisted workflow state.
   - Done when all runtime modules and tests can import the same contracts without duplicate type definitions or unsafe untyped values.
 
-- [ ] 1.3 Implement typed configuration parsing and defaults
+- [x] 1.3 Implement typed configuration parsing and defaults
   _Boundary: Configuration Core_
   _Depends: 1.2_
   _Requirements: 7.5, 9.1, 9.2, 9.3, 9.4, 9.5, 9.6, 10.1_
