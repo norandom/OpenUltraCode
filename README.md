@@ -6,13 +6,16 @@ It uses no proxy. It does not replace the selected model, create synthetic model
 
 ## Install
 
-1. Copy this project into the repository where you want OpenUltraCode behavior.
-2. Install dependencies with `npm install`.
-3. Run `npm run check` to verify the package assets and TypeScript sources.
-4. Add or keep the project-local opencode files under `.opencode/`.
-5. Quit and restart opencode so the plugin, commands, skills, and agents are loaded.
+1. Install the latest release with `curl -fsSL https://raw.githubusercontent.com/norandom/OpenUltraCode/main/install.sh | sh`, or run `./install.sh` from a checkout to install and verify locally.
+2. For local development, run `pnpm install` and `pnpm run check`.
+3. Add or keep the project-local opencode files under `.opencode/`.
+4. Quit and restart opencode so the plugin, commands, skills, and agents are loaded.
 
 The restart matters because opencode loads plugins, commands, skills, agents, and config at startup.
+
+Dependency installs use pnpm with a 3-day release-age cooldown (`minimumReleaseAge: 4320` in `pnpm-workspace.yaml`) so brand-new package releases are not selected immediately. `pnpm-workspace.yaml` explicitly allows the `esbuild` install script required by the TypeScript test runner.
+
+The installer also configures the repository pre-commit hook to run Dagger-backed ESLint through `pnpm run lint`.
 
 ## What You Get
 

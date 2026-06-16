@@ -15,7 +15,9 @@ interface FrontmatterDocument {
 const requiredScaffoldPaths = [
   "package.json",
   "opencode.json",
+  "pnpm-workspace.yaml",
   "tsconfig.json",
+  "install.sh",
   "src",
   ".opencode/plugins",
   ".opencode/plugins/open-ultracode.ts",

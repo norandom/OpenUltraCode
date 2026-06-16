@@ -21,11 +21,16 @@ export interface OpenCodePluginInput {
 
 export interface OpenUltraCodeHooks {
   readonly "chat.params"?: (input: unknown, output: ChatParams) => Promise<void>
+  readonly "command.execute.before"?: (input: unknown, output: CommandOutput) => Promise<void>
   readonly "permission.ask"?: (input: unknown, output: Record<string, unknown>) => Promise<void>
   readonly "tool.execute.after"?: (input: unknown, output: Record<string, unknown>) => Promise<void>
   readonly "experimental.session.compacting"?: () => Promise<string>
   readonly "experimental.compaction.autocontinue"?: () => Promise<string>
   readonly tool?: OpenUltraCodeTools
+}
+
+export interface CommandOutput {
+  readonly parts?: unknown[]
 }
 
 export interface OpenUltraCodeTools {
@@ -46,6 +51,7 @@ export function createOpenUltraCodeHooks(
 
   return {
     "chat.params": async (_input, output) => applyHighEffortHints(config, stateStore, output),
+    "command.execute.before": async (input, output) => announceActivation(input, output),
     "permission.ask": async (input, output) => observePermissionDecision(stateStore, input, output),
     "tool.execute.after": async (input, output) => observeToolExecution(stateStore, input, output),
     "experimental.session.compacting": async () => createCompactionContext(await stateStore.load()),
@@ -57,6 +63,31 @@ export function createOpenUltraCodeHooks(
       open_ultracode_completion_report: createCompletionReportTool(config, stateStore)
     }
   }
+}
+
+function announceActivation(input: unknown, output: CommandOutput): void {
+  if (!Array.isArray(output.parts)) {
+    return
+  }
+
+  const command = readString(input, "command")
+  const mode = command === undefined ? undefined : openUltraCodeCommandModes[command]
+  if (mode === undefined) {
+    return
+  }
+
+  output.parts.push({
+    type: "text",
+    text: `OpenUltraCode mode active: ${mode}. The active selected opencode model is preserved; workflow status, degradation notices, and verification gates are available.`
+  })
+}
+
+const openUltraCodeCommandModes: Readonly<Record<string, string>> = {
+  ultracode: "comprehensive",
+  "ultracode-debug": "debug",
+  "ultracode-spec-audit": "spec-audit",
+  "ultracode-research": "adversarial-research",
+  "ultracode-verify": "verify"
 }
 
 async function observePermissionDecision(

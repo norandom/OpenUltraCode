@@ -17,7 +17,9 @@ const requiredScaffoldPaths = [
   ".opencode/commands",
   "docs",
   "tests",
-  "scripts/validate-assets.ts"
+  "scripts/validate-assets.ts",
+  "install.sh",
+  "pnpm-workspace.yaml"
 ] as const
 
 describe("OpenUltraCode scaffold", () => {
@@ -36,12 +38,21 @@ describe("OpenUltraCode scaffold", () => {
   it("exposes an installable opencode project layout without model routing", () => {
     const config = readJson(join(projectRoot, "opencode.json"))
     const manifest = readJson(join(projectRoot, "package.json"))
+    const scripts = manifest.scripts as Record<string, unknown>
+    const pnpmWorkspace = readFileSync(join(projectRoot, "pnpm-workspace.yaml"), "utf8")
 
     assert.equal(config.$schema, "https://opencode.ai/config.json")
     assert.deepEqual(config.plugin, ["./.opencode/plugins/open-ultracode.ts"])
     assert.deepEqual(config.skills, { paths: [".opencode/skills"] })
     assert.equal("model" in config, false)
     assert.equal("provider" in config, false)
+    assert.equal(manifest.packageManager, "pnpm@11.4.0")
+    assert.equal(manifest.version, "0.1.0")
+    assert.equal(scripts.eslint, "eslint .")
+    assert.equal(scripts.lint, "dagger call lint --source .")
+    assert.equal(scripts.check, "pnpm run build && pnpm run lint && pnpm run test && pnpm run validate:assets")
+    assert.match(pnpmWorkspace, /^allowBuilds:\n {2}esbuild: true$/m)
+    assert.match(pnpmWorkspace, /^minimumReleaseAge: 4320$/m)
 
     assert.deepEqual(manifest.files, [
       ".opencode",
@@ -49,7 +60,13 @@ describe("OpenUltraCode scaffold", () => {
       "docs",
       "scripts/validate-assets.ts",
       "README.md",
-      "opencode.json"
+      "install.sh",
+      "eslint.config.js",
+      "dagger.json",
+      ".dagger",
+      ".githooks",
+      "opencode.json",
+      "pnpm-workspace.yaml"
     ])
   })
 
@@ -130,7 +147,16 @@ function createAssetFixture(): string {
     mkdirSync(join(root, relativePath), { recursive: true })
   }
 
-  writeFileSync(join(root, "package.json"), JSON.stringify({ files: [".opencode", "src", "docs", "scripts/validate-assets.ts", "README.md", "opencode.json"] }))
+  writeFileSync(join(root, "package.json"), JSON.stringify({
+    version: "0.1.0",
+    packageManager: "pnpm@11.4.0",
+    scripts: {
+      eslint: "eslint .",
+      lint: "dagger call lint --source .",
+      check: "pnpm run build && pnpm run lint && pnpm run test && pnpm run validate:assets"
+    },
+    files: [".opencode", "src", "docs", "scripts/validate-assets.ts", "README.md", "install.sh", "eslint.config.js", "dagger.json", ".dagger", ".githooks", "opencode.json", "pnpm-workspace.yaml"]
+  }))
   writeFileSync(
     join(root, "opencode.json"),
     JSON.stringify({
@@ -141,6 +167,8 @@ function createAssetFixture(): string {
   )
   writeFileSync(join(root, "tsconfig.json"), "{}\n")
   writeFileSync(join(root, "README.md"), "# OpenUltraCode\n")
+  writeFileSync(join(root, "install.sh"), "#!/usr/bin/env sh\n")
+  writeFileSync(join(root, "pnpm-workspace.yaml"), "allowBuilds:\n  esbuild: true\nminimumReleaseAge: 4320\n")
   writeFileSync(join(root, "scripts/validate-assets.ts"), "")
 
   writeFileSync(join(root, ".opencode/plugins/open-ultracode.ts"), "export default async () => ({})\n")

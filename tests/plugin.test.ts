@@ -61,6 +61,7 @@ describe("OpenUltraCode plugin entry point", () => {
 
     assert.equal(typeof hooks["experimental.session.compacting"], "function")
     assert.equal(typeof hooks["experimental.compaction.autocontinue"], "function")
+    assert.equal(typeof hooks["command.execute.before"], "function")
     assert.equal(typeof hooks["permission.ask"], "function")
     assert.equal(typeof hooks["tool.execute.after"], "function")
     assert.equal(typeof hooks.tool?.open_ultracode_status?.execute, "function")
@@ -68,6 +69,29 @@ describe("OpenUltraCode plugin entry point", () => {
     assert.equal(typeof hooks.tool?.open_ultracode_record_blocked_check?.execute, "function")
     assert.equal(typeof hooks.tool?.open_ultracode_completion_report?.execute, "function")
     assert.equal("experimental" in hooks, false)
+  })
+
+  it("announces when an OpenUltraCode command activates", async () => {
+    const hooks = await OpenUltraCodePlugin({ directory: await createProjectRoot() }, { enabled: true })
+    const output: { parts: unknown[] } = { parts: [] }
+
+    await getCommandExecuteBeforeHook(hooks)({ command: "ultracode-debug" }, output)
+
+    assert.deepEqual(output.parts, [
+      {
+        type: "text",
+        text: "OpenUltraCode mode active: debug. The active selected opencode model is preserved; workflow status, degradation notices, and verification gates are available."
+      }
+    ])
+  })
+
+  it("does not announce for non-OpenUltraCode commands", async () => {
+    const hooks = await OpenUltraCodePlugin({ directory: await createProjectRoot() }, { enabled: true })
+    const output: { parts: unknown[] } = { parts: [] }
+
+    await getCommandExecuteBeforeHook(hooks)({ command: "commit" }, output)
+
+    assert.deepEqual(output.parts, [])
   })
 
   it("does not register workflow tools when disabled", async () => {
@@ -441,6 +465,15 @@ function getChatParamsHook(hooks: OpenUltraCodeHooks): (input: unknown, output: 
   const hook = hooks["chat.params"]
   if (typeof hook !== "function") {
     throw new TypeError("chat.params hook is missing")
+  }
+
+  return hook
+}
+
+function getCommandExecuteBeforeHook(hooks: OpenUltraCodeHooks): (input: unknown, output: { parts: unknown[] }) => Promise<void> {
+  const hook = hooks["command.execute.before"]
+  if (typeof hook !== "function") {
+    throw new TypeError("command.execute.before hook is missing")
   }
 
   return hook
