@@ -17,7 +17,11 @@ const docs: readonly DocExpectation[] = [
       /restart/i,
       /pnpm/i,
       /install\.sh/i,
+      /install-dev\.sh/i,
       /latest release/i,
+      /GitHub release asset/i,
+      /openai\/gpt-5/i,
+      /up and down arrows/i,
       /^1\. Install the latest release with `curl -fsSL https:\/\/raw\.githubusercontent\.com\/norandom\/OpenUltraCode\/main\/install\.sh \| sh`\./im,
       /~\/\.config\/opencode/i,
       /global plugin, commands, skills, and agents/i,
@@ -30,7 +34,11 @@ const docs: readonly DocExpectation[] = [
       /\/ultracode\s+"/i,
       /\/ultracode-debug\s+"/i,
       /\/ultracode-spec-audit\s+"/i,
-      /\/ultracode-research\s+"/i
+      /\/ultracode-research\s+"/i,
+      /\/ultrathink\s+"/i,
+      /\/ultrathink-fusion/i,
+      /grounded/i,
+      /loose recall/i
     ]
   },
   {

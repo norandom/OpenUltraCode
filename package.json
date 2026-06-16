@@ -1,6 +1,6 @@
 {
   "name": "opencode-ultracode-workflow-plugin",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "type": "module",
   "files": [
@@ -10,6 +10,7 @@
     "scripts/validate-assets.ts",
     "README.md",
     "install.sh",
+    "install-dev.sh",
     "eslint.config.js",
     "dagger.json",
     ".dagger",

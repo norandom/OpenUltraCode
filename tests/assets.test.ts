@@ -19,6 +19,8 @@ const requiredScaffoldPaths = [
   "tests",
   "scripts/validate-assets.ts",
   "install.sh",
+  "install-dev.sh",
+  ".github/workflows/release.yml",
   "pnpm-workspace.yaml"
 ] as const
 
@@ -41,6 +43,8 @@ describe("OpenUltraCode scaffold", () => {
     const scripts = manifest.scripts as Record<string, unknown>
     const pnpmWorkspace = readFileSync(join(projectRoot, "pnpm-workspace.yaml"), "utf8")
     const installer = readFileSync(join(projectRoot, "install.sh"), "utf8")
+    const devInstaller = readFileSync(join(projectRoot, "install-dev.sh"), "utf8")
+    const releaseWorkflow = readFileSync(join(projectRoot, ".github/workflows/release.yml"), "utf8")
 
     assert.equal(config.$schema, "https://opencode.ai/config.json")
     assert.deepEqual(config.plugin, ["./.opencode/plugins/open-ultracode.ts"])
@@ -48,18 +52,28 @@ describe("OpenUltraCode scaffold", () => {
     assert.equal("model" in config, false)
     assert.equal("provider" in config, false)
     assert.equal(manifest.packageManager, "pnpm@11.4.0")
-    assert.equal(manifest.version, "0.1.2")
+    assert.equal(manifest.version, "0.1.3")
     assert.equal(scripts.eslint, "eslint .")
     assert.equal(scripts.lint, "dagger call lint --source .")
     assert.equal(scripts.check, "pnpm run build && pnpm run lint && pnpm run test && pnpm run validate:assets")
     assert.match(pnpmWorkspace, /^allowBuilds:\n {2}esbuild: true$/m)
     assert.match(pnpmWorkspace, /^minimumReleaseAge: 4320$/m)
     assert.match(installer, /OPENCODE_CONFIG_DIR="\$\{OPENCODE_CONFIG_DIR:-\$HOME\/\.config\/opencode\}"/)
+    assert.match(installer, /DEFAULT_FUSION_MODEL="openai\/gpt-5"/)
+    assert.match(installer, /read_current_model\(\)/)
+    assert.match(installer, /select_from_menu\(\)/)
+    assert.match(installer, /releases\/latest\/download\/open-ultracode-release\.tar\.gz/)
     assert.match(installer, /\.opencode\/skills\/open-ultracode/)
     assert.match(installer, /\.opencode\/commands\/ultracode\*\.md/)
+    assert.match(installer, /\.opencode\/commands\/ultrathink\*\.md/)
     assert.match(installer, /\.opencode\/agents\/open-ultracode\*\.md/)
     assert.match(installer, /\.opencode\/agents\/ultracode-fusion\*\.md/)
     assert.match(installer, /OPENCODE_PLUGIN_PATH/)
+    assert.match(devInstaller, /pnpm install --frozen-lockfile/)
+    assert.match(devInstaller, /pnpm run check/)
+    assert.match(devInstaller, /git config core\.hooksPath \.githooks/)
+    assert.match(releaseWorkflow, /open-ultracode-release\.tar\.gz/)
+    assert.match(releaseWorkflow, /gh release create/)
 
     assert.deepEqual(manifest.files, [
       ".opencode",
@@ -68,6 +82,7 @@ describe("OpenUltraCode scaffold", () => {
       "scripts/validate-assets.ts",
       "README.md",
       "install.sh",
+      "install-dev.sh",
       "eslint.config.js",
       "dagger.json",
       ".dagger",
@@ -167,7 +182,8 @@ function createAssetFixture(): string {
     ".opencode/commands",
     "docs",
     "tests",
-    "scripts"
+    "scripts",
+    ".github/workflows"
   ]) {
     mkdirSync(join(root, relativePath), { recursive: true })
   }
@@ -180,7 +196,7 @@ function createAssetFixture(): string {
       lint: "dagger call lint --source .",
       check: "pnpm run build && pnpm run lint && pnpm run test && pnpm run validate:assets"
     },
-    files: [".opencode", "src", "docs", "scripts/validate-assets.ts", "README.md", "install.sh", "eslint.config.js", "dagger.json", ".dagger", ".githooks", "opencode.json", "pnpm-workspace.yaml"]
+    files: [".opencode", "src", "docs", "scripts/validate-assets.ts", "README.md", "install.sh", "install-dev.sh", "eslint.config.js", "dagger.json", ".dagger", ".githooks", "opencode.json", "pnpm-workspace.yaml"]
   }))
   writeFileSync(
     join(root, "opencode.json"),
@@ -193,6 +209,8 @@ function createAssetFixture(): string {
   writeFileSync(join(root, "tsconfig.json"), "{}\n")
   writeFileSync(join(root, "README.md"), "# OpenUltraCode\n")
   writeFileSync(join(root, "install.sh"), "#!/usr/bin/env sh\n")
+  writeFileSync(join(root, "install-dev.sh"), "#!/usr/bin/env sh\n")
+  writeFileSync(join(root, ".github/workflows/release.yml"), "name: Release\n")
   writeFileSync(join(root, "pnpm-workspace.yaml"), "allowBuilds:\n  esbuild: true\nminimumReleaseAge: 4320\n")
   writeFileSync(join(root, "scripts/validate-assets.ts"), "")
 
@@ -201,30 +219,33 @@ function createAssetFixture(): string {
   for (const command of [
     ["ultracode.md", "comprehensive"],
     ["ultracode-debug.md", "debug"],
+    ["ultracode-fusion.md", "fusion"],
     ["ultracode-spec-audit.md", "spec-audit"],
     ["ultracode-research.md", "adversarial-research"],
-    ["ultracode-verify.md", "verify"]
+    ["ultracode-verify.md", "verify"],
+    ["ultrathink.md", "ultrathink"],
+    ["ultrathink-fusion.md", "ultrathink-fusion"]
   ] as const) {
     writeFileSync(join(root, ".opencode/commands", command[0]), commandAsset("Run workflow", command[1]))
   }
-    for (const agent of [
-      ["open-ultracode.md", "Coordinator"],
+  for (const agent of [
+    ["open-ultracode.md", "Coordinator"],
     ["open-ultracode-planner.md", "Planner"],
     ["open-ultracode-implementer.md", "Implementer"],
     ["open-ultracode-adversary.md", "Adversary"],
     ["open-ultracode-reconciler.md", "Reconciler"],
-      ["open-ultracode-verifier.md", "Verifier"],
-      ["open-ultracode-researcher.md", "Researcher"]
-    ] as const) {
-      writeFileSync(join(root, ".opencode/agents", agent[0]), agentAsset(agent[1]))
-    }
-    for (const agent of [
-      ["ultracode-fusion-panel-a.md", "Fusion panel A", "provider/model-a"],
-      ["ultracode-fusion-panel-b.md", "Fusion panel B", "provider/model-b"],
-      ["ultracode-fusion-arbiter.md", "Fusion arbiter", "provider/arbiter-model"]
-    ] as const) {
-      writeFileSync(join(root, ".opencode/agents", agent[0]), fusionAgentAsset(agent[1], agent[2]))
-    }
+    ["open-ultracode-verifier.md", "Verifier"],
+    ["open-ultracode-researcher.md", "Researcher"]
+  ] as const) {
+    writeFileSync(join(root, ".opencode/agents", agent[0]), agentAsset(agent[1]))
+  }
+  for (const agent of [
+    ["ultracode-fusion-panel-a.md", "Fusion panel A", "provider/model-a"],
+    ["ultracode-fusion-panel-b.md", "Fusion panel B", "provider/model-b"],
+    ["ultracode-fusion-arbiter.md", "Fusion arbiter", "provider/arbiter-model"]
+  ] as const) {
+    writeFileSync(join(root, ".opencode/agents", agent[0]), fusionAgentAsset(agent[1], agent[2]))
+  }
   return root
 }
 

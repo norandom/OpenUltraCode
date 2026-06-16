@@ -6,16 +6,16 @@ It uses no proxy. It does not replace the selected model, create synthetic model
 
 ## Install
 
-1. Install the latest release with `curl -fsSL https://raw.githubusercontent.com/norandom/OpenUltraCode/main/install.sh | sh`. If you already have a checkout, run `./install.sh` from the repo root.
-2. For local development, run `pnpm install` and `pnpm run check`.
-3. The installer copies the skill, slash commands, and agents into `~/.config/opencode/` and registers the plugin path in `~/.config/opencode/opencode.json`.
+1. Install the latest release with `curl -fsSL https://raw.githubusercontent.com/norandom/OpenUltraCode/main/install.sh | sh`.
+2. If you already have a checkout and want the development path, run `./install-dev.sh` from the repo root.
+3. The release installer pulls the latest GitHub release asset, copies the skill, slash commands, and agents into `~/.config/opencode/`, asks which fusion model IDs to set, and registers the plugin path in `~/.config/opencode/opencode.json`.
 4. Quit and restart opencode so the global plugin, commands, skills, and agents are loaded.
 
-The restart matters because opencode loads plugins, commands, skills, agents, and config at startup. If `/ultracode` does not appear, confirm you restarted opencode after running `install.sh`.
+The restart matters because opencode loads plugins, commands, skills, agents, and config at startup. If `/ultracode` does not appear, confirm you restarted opencode after running `install.sh` or `install-dev.sh`.
 
-Dependency installs use pnpm with a 3-day release-age cooldown (`minimumReleaseAge: 4320` in `pnpm-workspace.yaml`). That keeps brand-new package releases out of the install path. `pnpm-workspace.yaml` allows the `esbuild` install script because the TypeScript test runner needs it.
+Release installs do not run Dagger or `pnpm run check` on the user's machine. The GitHub Actions release workflow runs build, ESLint, tests, and asset validation, then publishes `open-ultracode-release.tar.gz` as the GitHub release asset consumed by `install.sh`.
 
-The installer also configures the repository pre-commit hook to run Dagger-backed ESLint through `pnpm run lint`.
+Development installs use pnpm with a 3-day release-age cooldown (`minimumReleaseAge: 4320` in `pnpm-workspace.yaml`). That keeps brand-new package releases out of the install path. `pnpm-workspace.yaml` allows the `esbuild` install script because the TypeScript test runner needs it. `install-dev.sh` also configures the repository pre-commit hook to run Dagger-backed ESLint through `pnpm run lint`.
 
 ## What you get
 
@@ -27,6 +27,8 @@ Slash commands are what you type in opencode:
 - `/ultracode-research` for adversarial research against a plan or claim.
 - `/ultracode-verify` for evidence-based completion checks.
 - `/ultracode-fusion` for explicit two-model fusion rounds with a selected decider.
+- `/ultrathink` for grounded, non-coding problem solving.
+- `/ultrathink-fusion` for grounded, non-coding two-panel fusion problem solving.
 
 The skill is named `open-ultracode`. It is not a slash command. The slash commands above tell opencode to use that skill, and opencode exposes skills to agents through its skill system rather than as `/open-ultracode`.
 
@@ -74,6 +76,20 @@ Fusion with an arbiter agent:
 /ultracode-fusion --panel ultracode-fusion-panel-a --panel ultracode-fusion-panel-b --decider ultracode-fusion-arbiter "Review this migration plan and resolve disagreements with cited evidence."
 ```
 
+Grounded problem solving without coding:
+
+```text
+/ultrathink "Decide whether we should keep the release installer shell-only or introduce a compiled helper. Use only the supplied constraints and call out unknowns."
+```
+
+Grounded fusion problem solving:
+
+```text
+/ultrathink-fusion --panel ultracode-fusion-panel-a --panel ultracode-fusion-panel-b --decider selected-model "Evaluate the product tradeoff using grounded evidence, not loose recall."
+```
+
+`/ultrathink` and `/ultrathink-fusion` are not coding commands. They separate supplied facts, verified evidence, assumptions, hypotheses, and recommendations. If the problem depends on facts that are not supplied, they should ask for context or mark the point as unknown instead of drifting into loose recall.
+
 ## Fusion model selection
 
 `/ultracode-fusion` is explicit opt-in fusion, not transparent routing for every prompt. A run has three model-bearing roles:
@@ -90,7 +106,9 @@ The bundled placeholders are:
 - `ultracode-fusion-panel-b` with `model: provider/model-b`.
 - `ultracode-fusion-arbiter` with `model: provider/arbiter-model`.
 
-Replace those placeholder model IDs with opencode model IDs that exist in your configured providers, such as `openai/gpt-5`, another GPT-5-family model, DeepSeek, or a local/provider-specific model. The command rejects runs that do not provide exactly two fusion panel agents or that name a decider outside `selected-model` or a fusion arbiter agent.
+The release installer replaces those placeholders for you. It reads the current `model` from `~/.config/opencode/opencode.json`, then lets you choose each fusion role with a small terminal menu using the up and down arrows. The default for panel A, panel B, and arbiter is `openai/gpt-5`; you can pick the current opencode model if it differs, or enter a custom `provider/model-id`. In non-interactive shells, the installer uses `openai/gpt-5` for all three fusion roles.
+
+You can also edit the installed agent files manually and replace those placeholder model IDs with opencode model IDs that exist in your configured providers, such as `openai/gpt-5`, another GPT-5-family model, DeepSeek, or a local/provider-specific model. The command rejects runs that do not provide exactly two fusion panel agents or that name a decider outside `selected-model` or a fusion arbiter agent.
 
 One-shot independent answers are reported as `panel-consult`, not strong fusion. Strong fusion requires the critique, revision, vote, and arbitration loop.
 

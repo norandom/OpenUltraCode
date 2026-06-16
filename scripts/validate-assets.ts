@@ -18,6 +18,8 @@ const requiredScaffoldPaths = [
   "pnpm-workspace.yaml",
   "tsconfig.json",
   "install.sh",
+  "install-dev.sh",
+  ".github/workflows/release.yml",
   "src",
   ".opencode/plugins",
   ".opencode/plugins/open-ultracode.ts",
@@ -35,7 +37,9 @@ const requiredCommandAssets = [
   "ultracode-fusion.md",
   "ultracode-spec-audit.md",
   "ultracode-research.md",
-  "ultracode-verify.md"
+  "ultracode-verify.md",
+  "ultrathink.md",
+  "ultrathink-fusion.md"
 ] as const
 
 const requiredAgentAssets = [

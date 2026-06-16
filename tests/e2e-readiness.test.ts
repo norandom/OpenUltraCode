@@ -18,7 +18,9 @@ const workflowCommands = [
   "ultracode-fusion.md",
   "ultracode-spec-audit.md",
   "ultracode-research.md",
-  "ultracode-verify.md"
+  "ultracode-verify.md",
+  "ultrathink.md",
+  "ultrathink-fusion.md"
 ] as const
 
 describe("OpenUltraCode end-to-end readiness", () => {

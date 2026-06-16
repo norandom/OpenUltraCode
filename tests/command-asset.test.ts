@@ -39,6 +39,16 @@ const commandExpectations: readonly CommandExpectation[] = [
     file: "ultracode-fusion.md",
     mode: "comprehensive",
     phases: ["Intake", "Planning", "Execution", "Adversarial Review", "Reconciliation", "Verification"]
+  },
+  {
+    file: "ultrathink.md",
+    mode: "ultrathink",
+    phases: ["Intake", "Grounding", "Option Generation", "Critique", "Synthesis", "Verification"]
+  },
+  {
+    file: "ultrathink-fusion.md",
+    mode: "ultrathink-fusion",
+    phases: ["Intake", "Grounding", "Divergent Reasoning", "Cross-Critique", "Revision And Vote", "Arbitration", "Verification"]
   }
 ] as const
 
@@ -80,5 +90,20 @@ describe("OpenUltraCode command assets", () => {
     assert.match(content, /selected-model|selected model/i)
     assert.match(content, /no proxy|do not introduce a proxy/i)
     assert.match(content, /synthetic model ID/i)
+  })
+
+  it("ultrathink commands define grounded non-coding problem solving", () => {
+    const ultrathink = readCommand("ultrathink.md")
+    const fusion = readCommand("ultrathink-fusion.md")
+
+    assert.match(ultrathink, /not a coding command/i)
+    assert.match(ultrathink, /loose recall/i)
+    assert.match(ultrathink, /supplied facts/i)
+    assert.match(ultrathink, /verified evidence/i)
+    assert.match(fusion, /grounded-critique-revise-vote/i)
+    assert.match(fusion, /exactly two/i)
+    assert.match(fusion, /--panel/i)
+    assert.match(fusion, /--decider/i)
+    assert.match(fusion, /unsupported recall/i)
   })
 })
