@@ -26,12 +26,14 @@ Slash commands are what you type in opencode:
 - `/ultracode-spec-audit` for incomplete or contradictory specs.
 - `/ultracode-research` for adversarial research against a plan or claim.
 - `/ultracode-verify` for evidence-based completion checks.
+- `/ultracode-fusion` for explicit two-model fusion rounds with a selected decider.
 
 The skill is named `open-ultracode`. It is not a slash command. The slash commands above tell opencode to use that skill, and opencode exposes skills to agents through its skill system rather than as `/open-ultracode`.
 
 Supporting assets:
 
 - Role agents for coordinator, planner, implementer, adversary, reconciler, verifier, and researcher workflows.
+- Fusion agents for panel and arbiter roles. These are intentionally separate from the normal workflow agents.
 - Plugin tools for workflow status, verification evidence, blocked checks, and completion reports.
 
 ## Examples
@@ -60,9 +62,43 @@ Adversarial research:
 /ultracode-research "Attack this implementation plan and identify assumptions, edge cases, unsafe defaults, and evidence gaps before we build it."
 ```
 
+Fusion workflow:
+
+```text
+/ultracode-fusion --panel ultracode-fusion-panel-a --panel ultracode-fusion-panel-b --decider selected-model "Compare the two proposed API designs and produce one implementation recommendation."
+```
+
+Fusion with an arbiter agent:
+
+```text
+/ultracode-fusion --panel ultracode-fusion-panel-a --panel ultracode-fusion-panel-b --decider ultracode-fusion-arbiter "Review this migration plan and resolve disagreements with cited evidence."
+```
+
+## Fusion model selection
+
+`/ultracode-fusion` is explicit opt-in fusion, not transparent routing for every prompt. A run has three model-bearing roles:
+
+- The selected opencode model remains the coordinator. It gathers context, validates arguments, dispatches rounds, and reports the final trace.
+- Exactly two panel agents produce and critique candidate answers. Pass them with repeated `--panel <agent-name>` flags.
+- The decider is either `selected-model` or a configured fusion arbiter agent passed with `--decider <agent-name>`.
+
+The default fusion concept is `critique-revise-vote`: each panel generates an answer from the same bounded context package, critiques the other panel's answer, revises its own answer, ranks the alternatives against the rubric, and then the decider arbitrates the final response.
+
+The bundled placeholders are:
+
+- `ultracode-fusion-panel-a` with `model: provider/model-a`.
+- `ultracode-fusion-panel-b` with `model: provider/model-b`.
+- `ultracode-fusion-arbiter` with `model: provider/arbiter-model`.
+
+Replace those placeholder model IDs with opencode model IDs that exist in your configured providers, such as `openai/gpt-5`, another GPT-5-family model, DeepSeek, or a local/provider-specific model. The command rejects runs that do not provide exactly two fusion panel agents or that name a decider outside `selected-model` or a fusion arbiter agent.
+
+One-shot independent answers are reported as `panel-consult`, not strong fusion. Strong fusion requires the critique, revision, vote, and arbitration loop.
+
 ## Selected model preservation
 
-OpenUltraCode inherits the active selected model from opencode. The bundled agents do not set `model:` frontmatter, and the plugin does not install provider routes or model aliases.
+OpenUltraCode inherits the active selected model from opencode. Normal bundled workflow agents do not set `model:` frontmatter, and the plugin does not install provider routes or model aliases.
+
+Fusion agents are the deliberate exception: they use explicit `model:` frontmatter so `/ultracode-fusion` can compare two configured opencode models while the selected model remains the coordinator. This still uses opencode's native agent model selection. It is not a proxy, synthetic model ID, provider route, hidden model switch, or replacement for the selected model.
 
 The package can add high-effort request hints only when a provider parameter already exists in the outgoing request. If the provider does not expose a compatible field, OpenUltraCode records a visible degradation notice instead of pretending the behavior is available.
 
