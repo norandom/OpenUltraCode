@@ -38,6 +38,19 @@ describe("workflow state store", () => {
     })
   })
 
+  it("does not reuse predictable workflow state temporary files", async () => {
+    const projectRoot = await createProjectRoot()
+    const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
+    const predictableTemporaryPath = join(projectRoot, `${stateFile}.${process.pid}.tmp`)
+    await mkdir(join(projectRoot, stateDirectory), { recursive: true })
+    await writeFile(predictableTemporaryPath, "pre-existing temp file", "utf8")
+
+    await store.update(createState())
+
+    assert.equal(await readFile(predictableTemporaryPath, "utf8"), "pre-existing temp file")
+    assert.equal(existsSync(join(projectRoot, stateFile)), true)
+  })
+
   it("clears state safely when present or missing", async () => {
     const projectRoot = await createProjectRoot()
     const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })

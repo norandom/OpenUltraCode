@@ -18,7 +18,7 @@ const docs: readonly DocExpectation[] = [
       /pnpm/i,
       /install\.sh/i,
       /latest release/i,
-      /raw\.githubusercontent\.com\/norandom\/OpenUltraCode\/main\/install\.sh/i,
+      /^1\. Install the latest release with `curl -fsSL https:\/\/raw\.githubusercontent\.com\/norandom\/OpenUltraCode\/main\/install\.sh \| sh`\./im,
       /~\/\.config\/opencode/i,
       /global plugin, commands, skills, and agents/i,
       /minimumReleaseAge: 4320/i,

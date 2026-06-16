@@ -191,11 +191,24 @@ function formatCapabilityList(notices: readonly DegradationNotice[], nounPrefix 
 }
 
 function slugify(value: string): string {
-  const slug = value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+  let slug = ""
+  let needsSeparator = false
+
+  for (const character of value.trim().toLowerCase()) {
+    const isLowerAscii = character >= "a" && character <= "z"
+    const isDigit = character >= "0" && character <= "9"
+
+    if (isLowerAscii || isDigit) {
+      if (needsSeparator && slug.length > 0) {
+        slug += "-"
+      }
+
+      slug += character
+      needsSeparator = false
+    } else {
+      needsSeparator = slug.length > 0
+    }
+  }
 
   return slug.length === 0 ? "unknown" : slug
 }

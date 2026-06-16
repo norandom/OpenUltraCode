@@ -1,4 +1,5 @@
-import { lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
+import { randomUUID } from "node:crypto"
+import { lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { dirname, resolve, sep } from "node:path"
 
 import type { DegradationNotice, PersistedWorkflowState, WorkflowState } from "./types.js"
@@ -61,16 +62,26 @@ export function createWorkflowStateStore(
         updatedAt: state.updatedAt,
         state
       }
-      const temporaryPath = `${statePath}.${process.pid}.tmp`
-
-      await writeFile(temporaryPath, `${JSON.stringify(persisted, null, 2)}\n`, "utf8")
-      await rename(temporaryPath, statePath)
+      await writeStateAtomically(statePath, `${JSON.stringify(persisted, null, 2)}\n`)
     },
 
     async clear(): Promise<void> {
       await rejectSymlinkedStatePath(root, config.state.directory, statePath)
       await rm(statePath, { force: true })
     }
+  }
+}
+
+async function writeStateAtomically(statePath: string, contents: string): Promise<void> {
+  const stateDirectory = dirname(statePath)
+  const stagingDirectory = await mkdtemp(resolve(stateDirectory, `.workflow-state-write-${randomUUID()}-`))
+  const stagingPath = resolve(stagingDirectory, stateFileName)
+
+  try {
+    await writeFile(stagingPath, contents, { encoding: "utf8", flag: "wx" })
+    await rename(stagingPath, statePath)
+  } finally {
+    await rm(stagingDirectory, { force: true, recursive: true })
   }
 }
 
