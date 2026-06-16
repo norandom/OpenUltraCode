@@ -58,6 +58,7 @@ describe("OpenUltraCode scaffold", () => {
     assert.match(installer, /\.opencode\/skills\/open-ultracode/)
     assert.match(installer, /\.opencode\/commands\/ultracode\*\.md/)
     assert.match(installer, /\.opencode\/agents\/open-ultracode\*\.md/)
+    assert.match(installer, /\.opencode\/agents\/ultracode-fusion\*\.md/)
     assert.match(installer, /OPENCODE_PLUGIN_PATH/)
 
     assert.deepEqual(manifest.files, [
@@ -112,6 +113,24 @@ describe("OpenUltraCode scaffold", () => {
     assert.equal(result.ok, false)
     assert.match(result.errors.join("\n"), /commands\/ultracode\.md.*model/i)
     assert.match(result.errors.join("\n"), /agents\/open-ultracode\.md.*model/i)
+  })
+
+  it("allows model frontmatter only for approved fusion agents", () => {
+    const root = createAssetFixture()
+    writeFileSync(
+      join(root, ".opencode/agents/ultracode-fusion-panel-a.md"),
+      fusionAgentAsset("Fusion panel A", "openai/gpt-5")
+    )
+    writeFileSync(
+      join(root, ".opencode/agents/not-fusion.md"),
+      agentAsset("Unexpected model", "model: openai/gpt-5\npermission:\n  edit: deny\n  bash: deny")
+    )
+
+    const result = validateAssets(root)
+
+    assert.equal(result.ok, false)
+    assert.match(result.errors.join("\n"), /agents\/not-fusion\.md.*model/i)
+    assert.doesNotMatch(result.errors.join("\n"), /ultracode-fusion-panel-a\.md.*model/i)
   })
 
   it("rejects unsafe agent permissions", () => {
@@ -188,17 +207,24 @@ function createAssetFixture(): string {
   ] as const) {
     writeFileSync(join(root, ".opencode/commands", command[0]), commandAsset("Run workflow", command[1]))
   }
-  for (const agent of [
-    ["open-ultracode.md", "Coordinator"],
+    for (const agent of [
+      ["open-ultracode.md", "Coordinator"],
     ["open-ultracode-planner.md", "Planner"],
     ["open-ultracode-implementer.md", "Implementer"],
     ["open-ultracode-adversary.md", "Adversary"],
     ["open-ultracode-reconciler.md", "Reconciler"],
-    ["open-ultracode-verifier.md", "Verifier"],
-    ["open-ultracode-researcher.md", "Researcher"]
-  ] as const) {
-    writeFileSync(join(root, ".opencode/agents", agent[0]), agentAsset(agent[1]))
-  }
+      ["open-ultracode-verifier.md", "Verifier"],
+      ["open-ultracode-researcher.md", "Researcher"]
+    ] as const) {
+      writeFileSync(join(root, ".opencode/agents", agent[0]), agentAsset(agent[1]))
+    }
+    for (const agent of [
+      ["ultracode-fusion-panel-a.md", "Fusion panel A", "provider/model-a"],
+      ["ultracode-fusion-panel-b.md", "Fusion panel B", "provider/model-b"],
+      ["ultracode-fusion-arbiter.md", "Fusion arbiter", "provider/arbiter-model"]
+    ] as const) {
+      writeFileSync(join(root, ".opencode/agents", agent[0]), fusionAgentAsset(agent[1], agent[2]))
+    }
   return root
 }
 
@@ -210,7 +236,7 @@ description: Use when running OpenUltraCode workflows.
 
 # OpenUltraCode
 
-Use the active selected model. Do not change provider. Ask for missing task context.
+Use the active selected model. Do not change provider. Ask for missing task context. Record verification evidence.
 `
 }
 
@@ -238,6 +264,22 @@ ${permission}
 # Agent
 
 Inherit the active selected model. Do not change provider. Return structured output.
+`
+}
+
+function fusionAgentAsset(description: string, model: string): string {
+  return `---
+description: ${description}
+mode: subagent
+model: ${model}
+permission:
+  edit: deny
+  bash: deny
+---
+
+# Fusion Agent
+
+Use only the supplied context. Return structured round output. Do not introduce a proxy, synthetic model ID, or provider route.
 `
 }
 

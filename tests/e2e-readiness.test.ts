@@ -15,6 +15,7 @@ import {
 const workflowCommands = [
   "ultracode.md",
   "ultracode-debug.md",
+  "ultracode-fusion.md",
   "ultracode-spec-audit.md",
   "ultracode-research.md",
   "ultracode-verify.md"

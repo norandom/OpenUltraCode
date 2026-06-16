@@ -34,6 +34,11 @@ const commandExpectations: readonly CommandExpectation[] = [
     file: "ultracode-verify.md",
     mode: "verify",
     phases: ["Evidence Inventory", "Run Checks", "Completion Report"]
+  },
+  {
+    file: "ultracode-fusion.md",
+    mode: "comprehensive",
+    phases: ["Intake", "Planning", "Execution", "Adversarial Review", "Reconciliation", "Verification"]
   }
 ] as const
 
@@ -61,4 +66,19 @@ describe("OpenUltraCode command assets", () => {
       }
     })
   }
+
+  it("ultracode-fusion.md defines explicit fusion protocol routing", () => {
+    const content = readCommand("ultracode-fusion.md")
+
+    assert.match(content, /--panel/i)
+    assert.match(content, /--decider/i)
+    assert.match(content, /exactly two/i)
+    assert.match(content, /critique-revise-vote/i)
+    assert.match(content, /bounded context package/i)
+    assert.match(content, /subagent dispatch contract/i)
+    assert.match(content, /arbitration rubric/i)
+    assert.match(content, /selected-model|selected model/i)
+    assert.match(content, /no proxy|do not introduce a proxy/i)
+    assert.match(content, /synthetic model ID/i)
+  })
 })

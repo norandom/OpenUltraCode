@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync } from "node:fs"
 import { basename, join } from "node:path"
 
 export interface AssetValidationResult {
@@ -32,6 +32,7 @@ const requiredScaffoldPaths = [
 const requiredCommandAssets = [
   "ultracode.md",
   "ultracode-debug.md",
+  "ultracode-fusion.md",
   "ultracode-spec-audit.md",
   "ultracode-research.md",
   "ultracode-verify.md"
@@ -44,8 +45,13 @@ const requiredAgentAssets = [
   "open-ultracode-adversary.md",
   "open-ultracode-reconciler.md",
   "open-ultracode-verifier.md",
-  "open-ultracode-researcher.md"
+  "open-ultracode-researcher.md",
+  "ultracode-fusion-panel-a.md",
+  "ultracode-fusion-panel-b.md",
+  "ultracode-fusion-arbiter.md"
 ] as const
+
+const fusionAgentPattern = /^ultracode-fusion-[\w-]+\.md$/u
 
 export function validateAssets(root = process.cwd()): AssetValidationResult {
   const errors: string[] = []
@@ -143,9 +149,37 @@ function validateAgents(root: string, errors: string[]): void {
     if (document.frontmatter.get("mode") !== "subagent") {
       errors.push(`${relativePath} frontmatter must set mode: subagent`)
     }
-    rejectModelOverride(relativePath, document, errors)
+    if (!fusionAgentPattern.test(fileName)) {
+      rejectModelOverride(relativePath, document, errors)
+    }
     validateAgentPermissions(relativePath, document, errors)
-    requireBody(relativePath, document.body, [/inherit the active selected model/i, /do not change provider/i, /structured output/i], errors)
+    if (fusionAgentPattern.test(fileName)) {
+      requireBody(relativePath, document.body, [/fusion/i, /supplied context/i, /structured round output/i], errors)
+    } else {
+      requireBody(relativePath, document.body, [/inherit the active selected model/i, /do not change provider/i, /structured output/i], errors)
+    }
+  }
+
+  for (const fileName of listAgentMarkdownFiles(root, errors)) {
+    if (requiredAgentAssets.includes(fileName as (typeof requiredAgentAssets)[number]) || fusionAgentPattern.test(fileName)) {
+      continue
+    }
+    const relativePath = `.opencode/agents/${fileName}`
+    const document = readFrontmatter(root, relativePath, errors)
+    if (document !== undefined) {
+      rejectModelOverride(relativePath, document, errors)
+    }
+  }
+}
+
+function listAgentMarkdownFiles(root: string, errors: string[]): readonly string[] {
+  const agentsPath = join(root, ".opencode/agents")
+  if (!existsSync(agentsPath)) return []
+  try {
+    return readdirSync(agentsPath).filter((fileName) => fileName.endsWith(".md"))
+  } catch (error) {
+    errors.push(`.opencode/agents could not be read: ${error instanceof Error ? error.message : String(error)}`)
+    return []
   }
 }
 

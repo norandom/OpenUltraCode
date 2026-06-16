@@ -40,6 +40,7 @@ install_global_assets() {
   cp -R ".opencode/skills/open-ultracode" "$OPENCODE_CONFIG_DIR/skills/open-ultracode"
   cp .opencode/commands/ultracode*.md "$OPENCODE_CONFIG_DIR/commands/"
   cp .opencode/agents/open-ultracode*.md "$OPENCODE_CONFIG_DIR/agents/"
+  cp .opencode/agents/ultracode-fusion*.md "$OPENCODE_CONFIG_DIR/agents/"
 
   register_global_plugin
 }

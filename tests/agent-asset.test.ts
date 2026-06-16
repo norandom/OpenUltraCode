@@ -47,6 +47,12 @@ const agentExpectations: readonly AgentExpectation[] = [
   }
 ] as const
 
+const fusionAgentFiles = [
+  "ultracode-fusion-panel-a.md",
+  "ultracode-fusion-panel-b.md",
+  "ultracode-fusion-arbiter.md"
+] as const
+
 function readAgent(file: string): string {
   return readFileSync(join(process.cwd(), ".opencode/agents", file), "utf8")
 }
@@ -70,6 +76,25 @@ describe("OpenUltraCode agent assets", () => {
       for (const requiredText of agent.required) {
         assert.match(content, requiredText)
       }
+    })
+  }
+
+  for (const file of fusionAgentFiles) {
+    it(`${file} is an explicit fusion-scoped model exception`, () => {
+      const content = readAgent(file)
+
+      assert.match(content, /^---\n[\s\S]+?\n---/)
+      assert.match(content, /^description:\s*.+$/m)
+      assert.match(content, /^mode:\s*subagent$/m)
+      assert.match(content, /^model:\s*[^\s]+\/[^^\s]+$/m)
+      assert.match(content, /^permission:/m)
+      assert.match(content, /fusion/i)
+      assert.match(content, /supplied context/i)
+      assert.match(content, /structured round output/i)
+      assert.match(content, /do not introduce a proxy/i)
+      assert.match(content, /synthetic model ID/i)
+      assert.match(content, /provider route/i)
+      assert.doesNotMatch(content, /override the selected model/i)
     })
   }
 })
