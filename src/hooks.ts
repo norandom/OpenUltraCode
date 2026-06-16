@@ -76,6 +76,7 @@ function announceActivation(input: unknown, output: CommandOutput): void {
     return
   }
 
+  // Put the mode marker into the command prompt itself so users see it in opencode without needing a provider or TUI hook.
   output.parts.push({
     type: "text",
     text: `OpenUltraCode mode active: ${mode}. The active selected opencode model is preserved; workflow status, degradation notices, and verification gates are available.`
@@ -233,6 +234,7 @@ function createCompactionContext(loaded: WorkflowStateLoadSnapshot): string {
     return ""
   }
 
+  // Keep compaction context to workflow state only. Model, provider, transcript, and unrelated project data stay out.
   const lines = ["OpenUltraCode workflow continuity"]
 
   if (loaded.state !== undefined) {

@@ -3,7 +3,7 @@ import { dag, Directory, object, func } from "@dagger.io/dagger"
 @object()
 export class OpencodeUltracode {
   /**
-   * Run ESLint inside a Dagger-managed Node container.
+   * Run ESLint in the same container path used by CI and the pre-commit hook.
    */
   @func()
   async lint(source: Directory): Promise<string> {
@@ -20,7 +20,7 @@ export class OpencodeUltracode {
   }
 
   /**
-   * Validate the release tag that should be created after checks pass.
+   * Check the release tag format after lint passes. The git tag is created on the host.
    */
   @func()
   async tag(source: Directory, version = "0.1.0"): Promise<string> {

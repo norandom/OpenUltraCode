@@ -1,23 +1,23 @@
 # OpenUltraCode
 
-OpenUltraCode is an opencode workflow package for UltraCode-style task discipline. It keeps the model already selected in opencode, adds prompt assets, role agents, workflow commands, verification tools, and a thin plugin for state, degradation notices, and request hints.
+OpenUltraCode adds UltraCode-style workflow discipline to opencode. It keeps the model you already selected, then adds prompt assets, role agents, slash commands, verification tools, and a small plugin for state, degradation notices, and request hints.
 
 It uses no proxy. It does not replace the selected model, create synthetic model IDs, or route provider traffic. If you change models, use opencode's normal model selection.
 
 ## Install
 
-1. Install the latest release with `curl -fsSL https://raw.githubusercontent.com/norandom/OpenUltraCode/main/install.sh | sh`, or run `./install.sh` from a checkout to install and verify locally.
+1. Install the latest release with `curl -fsSL https://raw.githubusercontent.com/norandom/OpenUltraCode/main/install.sh | sh`. If you already have a checkout, run `./install.sh` from the repo root.
 2. For local development, run `pnpm install` and `pnpm run check`.
 3. The installer copies the skill, slash commands, and agents into `~/.config/opencode/` and registers the plugin path in `~/.config/opencode/opencode.json`.
 4. Quit and restart opencode so the global plugin, commands, skills, and agents are loaded.
 
 The restart matters because opencode loads plugins, commands, skills, agents, and config at startup. If `/ultracode` does not appear, confirm you restarted opencode after running `install.sh`.
 
-Dependency installs use pnpm with a 3-day release-age cooldown (`minimumReleaseAge: 4320` in `pnpm-workspace.yaml`) so brand-new package releases are not selected immediately. `pnpm-workspace.yaml` explicitly allows the `esbuild` install script required by the TypeScript test runner.
+Dependency installs use pnpm with a 3-day release-age cooldown (`minimumReleaseAge: 4320` in `pnpm-workspace.yaml`). That keeps brand-new package releases out of the install path. `pnpm-workspace.yaml` allows the `esbuild` install script because the TypeScript test runner needs it.
 
 The installer also configures the repository pre-commit hook to run Dagger-backed ESLint through `pnpm run lint`.
 
-## What You Get
+## What you get
 
 Slash commands are what you type in opencode:
 
@@ -27,7 +27,7 @@ Slash commands are what you type in opencode:
 - `/ultracode-research` for adversarial research against a plan or claim.
 - `/ultracode-verify` for evidence-based completion checks.
 
-The skill is named `open-ultracode`. It is not a slash command. The slash commands above invoke that skill by instruction, and opencode exposes skills to agents through its skill system rather than as `/open-ultracode`.
+The skill is named `open-ultracode`. It is not a slash command. The slash commands above tell opencode to use that skill, and opencode exposes skills to agents through its skill system rather than as `/open-ultracode`.
 
 Supporting assets:
 
@@ -60,13 +60,13 @@ Adversarial research:
 /ultracode-research "Attack this implementation plan and identify assumptions, edge cases, unsafe defaults, and evidence gaps before we build it."
 ```
 
-## Selected Model Preservation
+## Selected model preservation
 
 OpenUltraCode inherits the active selected model from opencode. The bundled agents do not set `model:` frontmatter, and the plugin does not install provider routes or model aliases.
 
 The package can add high-effort request hints only when a provider parameter already exists in the outgoing request. If the provider does not expose a compatible field, OpenUltraCode records a visible degradation notice instead of pretending the behavior is available.
 
-## Safe Troubleshooting
+## Safe troubleshooting
 
 - If commands, agents, or skills do not appear, restart opencode.
 - If high-effort behavior is unsupported, check workflow status for a degradation notice.
