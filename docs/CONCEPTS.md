@@ -2,6 +2,8 @@
 
 OpenUltraCode is a workflow layer for opencode. It makes task phases, assumptions, adversarial review, and verification visible while preserving the model selected by the user.
 
+The initial concept is based on [UltraCode-Shim](https://github.com/OnlyTerp/UltraCode-Shim). OpenUltraCode keeps the workflow ideas but implements them as opencode-native skills, commands, agents, and plugin hooks instead of a loopback proxy or model-routing shim.
+
 ## Workflow
 
 The workflow is a disciplined loop:
