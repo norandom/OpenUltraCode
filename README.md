@@ -8,10 +8,10 @@ It uses no proxy. It does not replace the selected model, create synthetic model
 
 1. Install the latest release with `curl -fsSL https://raw.githubusercontent.com/norandom/OpenUltraCode/main/install.sh | sh`, or run `./install.sh` from a checkout to install and verify locally.
 2. For local development, run `pnpm install` and `pnpm run check`.
-3. Add or keep the project-local opencode files under `.opencode/`.
-4. Quit and restart opencode so the plugin, commands, skills, and agents are loaded.
+3. The installer copies the skill, slash commands, and agents into `~/.config/opencode/` and registers the plugin path in `~/.config/opencode/opencode.json`.
+4. Quit and restart opencode so the global plugin, commands, skills, and agents are loaded.
 
-The restart matters because opencode loads plugins, commands, skills, agents, and config at startup.
+The restart matters because opencode loads plugins, commands, skills, agents, and config at startup. If `/ultracode` does not appear, confirm you restarted opencode after running `install.sh`.
 
 Dependency installs use pnpm with a 3-day release-age cooldown (`minimumReleaseAge: 4320` in `pnpm-workspace.yaml`) so brand-new package releases are not selected immediately. `pnpm-workspace.yaml` explicitly allows the `esbuild` install script required by the TypeScript test runner.
 
@@ -19,11 +19,18 @@ The installer also configures the repository pre-commit hook to run Dagger-backe
 
 ## What You Get
 
+Slash commands are what you type in opencode:
+
 - `/ultracode` for comprehensive build/review/verify work.
 - `/ultracode-debug` for reproduce/root-cause/fix loops.
 - `/ultracode-spec-audit` for incomplete or contradictory specs.
 - `/ultracode-research` for adversarial research against a plan or claim.
 - `/ultracode-verify` for evidence-based completion checks.
+
+The skill is named `open-ultracode`. It is not a slash command. The slash commands above invoke that skill by instruction, and opencode exposes skills to agents through its skill system rather than as `/open-ultracode`.
+
+Supporting assets:
+
 - Role agents for coordinator, planner, implementer, adversary, reconciler, verifier, and researcher workflows.
 - Plugin tools for workflow status, verification evidence, blocked checks, and completion reports.
 

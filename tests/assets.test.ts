@@ -40,6 +40,7 @@ describe("OpenUltraCode scaffold", () => {
     const manifest = readJson(join(projectRoot, "package.json"))
     const scripts = manifest.scripts as Record<string, unknown>
     const pnpmWorkspace = readFileSync(join(projectRoot, "pnpm-workspace.yaml"), "utf8")
+    const installer = readFileSync(join(projectRoot, "install.sh"), "utf8")
 
     assert.equal(config.$schema, "https://opencode.ai/config.json")
     assert.deepEqual(config.plugin, ["./.opencode/plugins/open-ultracode.ts"])
@@ -53,6 +54,11 @@ describe("OpenUltraCode scaffold", () => {
     assert.equal(scripts.check, "pnpm run build && pnpm run lint && pnpm run test && pnpm run validate:assets")
     assert.match(pnpmWorkspace, /^allowBuilds:\n {2}esbuild: true$/m)
     assert.match(pnpmWorkspace, /^minimumReleaseAge: 4320$/m)
+    assert.match(installer, /OPENCODE_CONFIG_DIR="\$\{OPENCODE_CONFIG_DIR:-\$HOME\/\.config\/opencode\}"/)
+    assert.match(installer, /\.opencode\/skills\/open-ultracode/)
+    assert.match(installer, /\.opencode\/commands\/ultracode\*\.md/)
+    assert.match(installer, /\.opencode\/agents\/open-ultracode\*\.md/)
+    assert.match(installer, /OPENCODE_PLUGIN_PATH/)
 
     assert.deepEqual(manifest.files, [
       ".opencode",
