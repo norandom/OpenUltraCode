@@ -48,7 +48,7 @@ describe("OpenUltraCode scaffold", () => {
     assert.equal("model" in config, false)
     assert.equal("provider" in config, false)
     assert.equal(manifest.packageManager, "pnpm@11.4.0")
-    assert.equal(manifest.version, "0.1.0")
+    assert.equal(manifest.version, "0.1.1")
     assert.equal(scripts.eslint, "eslint .")
     assert.equal(scripts.lint, "dagger call lint --source .")
     assert.equal(scripts.check, "pnpm run build && pnpm run lint && pnpm run test && pnpm run validate:assets")
@@ -154,7 +154,7 @@ function createAssetFixture(): string {
   }
 
   writeFileSync(join(root, "package.json"), JSON.stringify({
-    version: "0.1.0",
+    version: "0.1.1",
     packageManager: "pnpm@11.4.0",
     scripts: {
       eslint: "eslint .",
