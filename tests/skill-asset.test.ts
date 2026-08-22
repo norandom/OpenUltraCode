@@ -19,7 +19,7 @@ describe("OpenUltraCode skill asset", () => {
   it("has valid frontmatter and trigger guidance", () => {
     const content = readSkill()
 
-    assert.match(content, /^---\n[\s\S]+?\n---/)
+    assert.match(content, /^---\r?\n[\s\S]+?\r?\n---/)
     assert.equal(frontmatterValue(content, "name"), "open-ultracode")
     assert.match(frontmatterValue(content, "description"), /Use when/i)
     assert.match(frontmatterValue(content, "description"), /ultracode|workflow|spec|debug/i)

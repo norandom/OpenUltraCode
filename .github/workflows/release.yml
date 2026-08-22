@@ -57,12 +57,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          release_flags=()
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             tag="${GITHUB_REF_NAME}"
+            case "$tag" in
+              *-*) release_flags+=(--prerelease) ;;
+            esac
           else
             tag="manual-${GITHUB_RUN_NUMBER}"
           fi
           gh release create "$tag" open-ultracode-release.tar.gz \
             --title "$tag" \
             --notes "OpenUltraCode release archive for install.sh." \
+            "${release_flags[@]}" \
             --target "$GITHUB_SHA"

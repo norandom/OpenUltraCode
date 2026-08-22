@@ -86,9 +86,12 @@ function announceActivation(input: unknown, output: CommandOutput): void {
 const openUltraCodeCommandModes: Readonly<Record<string, string>> = {
   ultracode: "comprehensive",
   "ultracode-debug": "debug",
+  "ultracode-fusion": "fusion",
+  "ultracode-fusion-models": "fusion-configuration",
   "ultracode-spec-audit": "spec-audit",
   "ultracode-research": "adversarial-research",
-  "ultracode-verify": "verify"
+  "ultracode-verify": "verify",
+  "ultrathink-fusion": "ultrathink-fusion"
 }
 
 async function observePermissionDecision(

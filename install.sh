@@ -4,7 +4,9 @@ set -eu
 REPO="norandom/OpenUltraCode"
 INSTALL_DIR="${OPENULTRACODE_HOME:-$HOME/.local/share/open-ultracode}"
 OPENCODE_CONFIG_DIR="${OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}"
-DEFAULT_FUSION_MODEL="openai/gpt-5"
+DEFAULT_FUSION_PANEL_A_MODEL="opencode/deepseek-v4-pro#max"
+DEFAULT_FUSION_PANEL_B_MODEL="opencode/glm-5.2#max"
+DEFAULT_FUSION_ARBITER_MODEL="opencode/kimi-k3#max"
 
 need_command() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -29,6 +31,28 @@ try {
   }
 } catch {
   process.exit(0)
+}
+NODE
+}
+
+read_agent_model() {
+  agent_file="$1"
+  if [ ! -f "$agent_file" ]; then
+    return
+  fi
+
+  AGENT_FILE="$agent_file" node <<'NODE'
+const fs = require("node:fs")
+
+const file = process.env.AGENT_FILE
+if (!file) process.exit(0)
+const content = fs.readFileSync(file, "utf8")
+const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(content)?.[1]
+const model = frontmatter === undefined ? undefined : /^model:[ \t]*(\S+)[ \t]*$/m.exec(frontmatter)?.[1]
+const legacyFusionPlaceholders = new Set(["provider/model-a", "provider/model-b", "provider/arbiter-model"])
+const baseModel = model?.replace(/#[^#]+$/, "")
+if (baseModel !== undefined && !legacyFusionPlaceholders.has(baseModel)) {
+  process.stdout.write(`${baseModel}#max`)
 }
 NODE
 }
@@ -97,14 +121,15 @@ process.stdin.on("keypress", (_str, key) => {
 
 choose_model() {
   prompt="$1"
-  current_model="$2"
-  selected=$(select_from_menu "$prompt" "$DEFAULT_FUSION_MODEL" "$current_model")
+  default_model="$2"
+  current_model="$3"
+  selected=$(select_from_menu "$prompt" "$default_model" "$current_model")
   if [ "$selected" = "Custom model ID" ]; then
     printf '%s: ' "$prompt" >&2
     IFS= read -r selected
   fi
   if [ -z "$selected" ]; then
-    selected="$DEFAULT_FUSION_MODEL"
+    selected="$default_model"
   fi
   printf '%s' "$selected"
 }
@@ -127,7 +152,11 @@ download_latest_release() {
 }
 
 install_global_assets() {
-  mkdir -p "$OPENCODE_CONFIG_DIR/skills" "$OPENCODE_CONFIG_DIR/commands" "$OPENCODE_CONFIG_DIR/agents"
+  mkdir -p "$OPENCODE_CONFIG_DIR/skills" "$OPENCODE_CONFIG_DIR/commands" "$OPENCODE_CONFIG_DIR/agents" "$OPENCODE_CONFIG_DIR/tools" "$OPENCODE_CONFIG_DIR/lib"
+
+  existing_panel_a=$(read_agent_model "$OPENCODE_CONFIG_DIR/agents/ultracode-fusion-panel-a.md" || true)
+  existing_panel_b=$(read_agent_model "$OPENCODE_CONFIG_DIR/agents/ultracode-fusion-panel-b.md" || true)
+  existing_arbiter=$(read_agent_model "$OPENCODE_CONFIG_DIR/agents/ultracode-fusion-arbiter.md" || true)
 
   rm -rf "$OPENCODE_CONFIG_DIR/skills/open-ultracode"
   cp -R "$INSTALL_DIR/.opencode/skills/open-ultracode" "$OPENCODE_CONFIG_DIR/skills/open-ultracode"
@@ -135,16 +164,21 @@ install_global_assets() {
   cp "$INSTALL_DIR"/.opencode/commands/ultrathink*.md "$OPENCODE_CONFIG_DIR/commands/"
   cp "$INSTALL_DIR"/.opencode/agents/open-ultracode*.md "$OPENCODE_CONFIG_DIR/agents/"
   cp "$INSTALL_DIR"/.opencode/agents/ultracode-fusion*.md "$OPENCODE_CONFIG_DIR/agents/"
+  cp "$INSTALL_DIR/.opencode/tools/open_ultracode_configure_fusion.ts" "$OPENCODE_CONFIG_DIR/tools/"
+  cp "$INSTALL_DIR/.opencode/lib/fusion-config.ts" "$OPENCODE_CONFIG_DIR/lib/"
 
-  configure_fusion_models
+  configure_fusion_models "$existing_panel_a" "$existing_panel_b" "$existing_arbiter"
   register_global_plugin
 }
 
 configure_fusion_models() {
+  panel_a_default="${1:-$DEFAULT_FUSION_PANEL_A_MODEL}"
+  panel_b_default="${2:-$DEFAULT_FUSION_PANEL_B_MODEL}"
+  arbiter_default="${3:-$DEFAULT_FUSION_ARBITER_MODEL}"
   current_model=$(read_current_model || true)
-  panel_a=$(choose_model "Choose fusion panel A model" "$current_model")
-  panel_b=$(choose_model "Choose fusion panel B model" "$current_model")
-  arbiter=$(choose_model "Choose fusion arbiter model" "$current_model")
+  panel_a=$(choose_model "Choose fusion panel A model" "$panel_a_default" "$current_model")
+  panel_b=$(choose_model "Choose fusion panel B model" "$panel_b_default" "$current_model")
+  arbiter=$(choose_model "Choose fusion arbiter model" "$arbiter_default" "$current_model")
 
   replace_agent_model "$OPENCODE_CONFIG_DIR/agents/ultracode-fusion-panel-a.md" "$panel_a"
   replace_agent_model "$OPENCODE_CONFIG_DIR/agents/ultracode-fusion-panel-b.md" "$panel_b"
@@ -164,9 +198,17 @@ const fs = require("node:fs")
 const file = process.env.AGENT_FILE
 const model = process.env.AGENT_MODEL
 if (!file || !model) throw new Error("missing agent model replacement input")
+if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\/[^\s#]+(?:#max)?$/.test(model)) {
+  throw new Error(`${model} must be provider/model or provider/model#max`)
+}
 const content = fs.readFileSync(file, "utf8")
 if (!/^model: .+$/m.test(content)) throw new Error(`${file} does not contain model frontmatter`)
-fs.writeFileSync(file, content.replace(/^model: .+$/m, `model: ${model}`))
+const baseModel = model.replace(/#[^#]+$/, "")
+let updated = content.replace(/^model: .+$/m, `model: ${baseModel}`)
+updated = /^variant:/m.test(updated)
+  ? updated.replace(/^variant:.*$/m, "variant: max")
+  : updated.replace(/^model:.*$/m, (line) => `${line}\nvariant: max`)
+fs.writeFileSync(file, updated)
 NODE
 }
 
@@ -200,6 +242,16 @@ if (typeof config !== "object" || config === null || Array.isArray(config)) {
 }
 
 config.$schema ??= "https://opencode.ai/config.json"
+if (config.permission === undefined) {
+  config.permission = { open_ultracode_configure_fusion: "ask" }
+} else if (
+  typeof config.permission === "object" &&
+  config.permission !== null &&
+  !Array.isArray(config.permission) &&
+  !("open_ultracode_configure_fusion" in config.permission)
+) {
+  config.permission.open_ultracode_configure_fusion = "ask"
+}
 const existing = Array.isArray(config.plugin) ? config.plugin : []
 config.plugin = existing.filter((entry) => entry !== "./.opencode/plugins/open-ultracode.ts")
 if (!config.plugin.includes(pluginPath)) {

@@ -18,8 +18,60 @@ ensure_pnpm() {
   fi
 }
 
+read_agent_model() {
+  agent_file="$1"
+  if [ ! -f "$agent_file" ]; then
+    return
+  fi
+
+  AGENT_FILE="$agent_file" node <<'NODE'
+const fs = require("node:fs")
+
+const file = process.env.AGENT_FILE
+if (!file) process.exit(0)
+const content = fs.readFileSync(file, "utf8")
+const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(content)?.[1]
+const model = frontmatter === undefined ? undefined : /^model:[ \t]*(\S+)[ \t]*$/m.exec(frontmatter)?.[1]
+const legacyFusionPlaceholders = new Set(["provider/model-a", "provider/model-b", "provider/arbiter-model"])
+const baseModel = model?.replace(/#[^#]+$/, "")
+if (baseModel !== undefined && !legacyFusionPlaceholders.has(baseModel)) {
+  process.stdout.write(`${baseModel}#max`)
+}
+NODE
+}
+
+restore_agent_model() {
+  agent_file="$1"
+  model="$2"
+  if [ -z "$model" ]; then
+    return
+  fi
+
+  AGENT_FILE="$agent_file" AGENT_MODEL="$model" node <<'NODE'
+const fs = require("node:fs")
+
+const file = process.env.AGENT_FILE
+const model = process.env.AGENT_MODEL
+if (!file || !model) throw new Error("missing fusion model restore input")
+if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\/[^\s#]+#max$/.test(model)) {
+  throw new Error(`${model} must be provider/model#max`)
+}
+const content = fs.readFileSync(file, "utf8")
+const baseModel = model.replace(/#[^#]+$/, "")
+let updated = content.replace(/^model:[^\r\n]+$/m, `model: ${baseModel}`)
+updated = /^variant:/m.test(updated)
+  ? updated.replace(/^variant:.*$/m, "variant: max")
+  : updated.replace(/^model:.*$/m, (line) => `${line}\nvariant: max`)
+fs.writeFileSync(file, updated)
+NODE
+}
+
 install_global_assets() {
-  mkdir -p "$OPENCODE_CONFIG_DIR/skills" "$OPENCODE_CONFIG_DIR/commands" "$OPENCODE_CONFIG_DIR/agents"
+  mkdir -p "$OPENCODE_CONFIG_DIR/skills" "$OPENCODE_CONFIG_DIR/commands" "$OPENCODE_CONFIG_DIR/agents" "$OPENCODE_CONFIG_DIR/tools" "$OPENCODE_CONFIG_DIR/lib"
+
+  existing_panel_a=$(read_agent_model "$OPENCODE_CONFIG_DIR/agents/ultracode-fusion-panel-a.md" || true)
+  existing_panel_b=$(read_agent_model "$OPENCODE_CONFIG_DIR/agents/ultracode-fusion-panel-b.md" || true)
+  existing_arbiter=$(read_agent_model "$OPENCODE_CONFIG_DIR/agents/ultracode-fusion-arbiter.md" || true)
 
   rm -rf "$OPENCODE_CONFIG_DIR/skills/open-ultracode"
   cp -R ".opencode/skills/open-ultracode" "$OPENCODE_CONFIG_DIR/skills/open-ultracode"
@@ -27,6 +79,12 @@ install_global_assets() {
   cp .opencode/commands/ultrathink*.md "$OPENCODE_CONFIG_DIR/commands/"
   cp .opencode/agents/open-ultracode*.md "$OPENCODE_CONFIG_DIR/agents/"
   cp .opencode/agents/ultracode-fusion*.md "$OPENCODE_CONFIG_DIR/agents/"
+  cp .opencode/tools/open_ultracode_configure_fusion.ts "$OPENCODE_CONFIG_DIR/tools/"
+  cp .opencode/lib/fusion-config.ts "$OPENCODE_CONFIG_DIR/lib/"
+
+  restore_agent_model "$OPENCODE_CONFIG_DIR/agents/ultracode-fusion-panel-a.md" "$existing_panel_a"
+  restore_agent_model "$OPENCODE_CONFIG_DIR/agents/ultracode-fusion-panel-b.md" "$existing_panel_b"
+  restore_agent_model "$OPENCODE_CONFIG_DIR/agents/ultracode-fusion-arbiter.md" "$existing_arbiter"
 
   register_global_plugin
 }
@@ -61,6 +119,16 @@ if (typeof config !== "object" || config === null || Array.isArray(config)) {
 }
 
 config.$schema ??= "https://opencode.ai/config.json"
+if (config.permission === undefined) {
+  config.permission = { open_ultracode_configure_fusion: "ask" }
+} else if (
+  typeof config.permission === "object" &&
+  config.permission !== null &&
+  !Array.isArray(config.permission) &&
+  !("open_ultracode_configure_fusion" in config.permission)
+) {
+  config.permission.open_ultracode_configure_fusion = "ask"
+}
 const existing = Array.isArray(config.plugin) ? config.plugin : []
 config.plugin = existing.filter((entry) => entry !== "./.opencode/plugins/open-ultracode.ts")
 if (!config.plugin.includes(pluginPath)) {

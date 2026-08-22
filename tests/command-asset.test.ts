@@ -61,7 +61,7 @@ describe("OpenUltraCode command assets", () => {
     it(`${command.file} has valid command routing guidance`, () => {
       const content = readCommand(command.file)
 
-      assert.match(content, /^---\n[\s\S]+?\n---/)
+      assert.match(content, /^---\r?\n[\s\S]+?\r?\n---/)
       assert.match(content, /^description:\s*.+$/m)
       assert.match(content, /\$ARGUMENTS/)
       assert.match(content, new RegExp(`mode:\\s*${command.mode}`, "i"))
@@ -90,6 +90,24 @@ describe("OpenUltraCode command assets", () => {
     assert.match(content, /selected-model|selected model/i)
     assert.match(content, /no proxy|do not introduce a proxy/i)
     assert.match(content, /synthetic model ID/i)
+    assert.match(content, /zero `--panel` flags/i)
+    assert.match(content, /no `--decider` flag/i)
+    assert.match(content, /one panel flag is invalid/i)
+  })
+
+  it("ultracode-fusion-models.md configures persistent fusion roles through the scoped tool", () => {
+    const content = readCommand("ultracode-fusion-models.md")
+
+    assert.match(content, /\$ARGUMENTS/)
+    assert.match(content, /--panel-a/i)
+    assert.match(content, /--panel-b/i)
+    assert.match(content, /--decider/i)
+    assert.match(content, /provider\/model/i)
+    assert.match(content, /open_ultracode_configure_fusion/i)
+    assert.match(content, /maximum reasoning/i)
+    assert.match(content, /reject every other variant/i)
+    assert.match(content, /restart/i)
+    assert.doesNotMatch(content, /^model:/m)
   })
 
   it("ultrathink commands define grounded non-coding problem solving", () => {
@@ -105,5 +123,7 @@ describe("OpenUltraCode command assets", () => {
     assert.match(fusion, /--panel/i)
     assert.match(fusion, /--decider/i)
     assert.match(fusion, /unsupported recall/i)
+    assert.match(fusion, /zero `--panel` flags/i)
+    assert.match(fusion, /no `--decider` flag/i)
   })
 })

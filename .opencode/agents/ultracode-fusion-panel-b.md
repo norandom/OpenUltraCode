@@ -1,10 +1,13 @@
 ---
 description: Participates in OpenUltraCode fusion as configurable panel B.
 mode: subagent
-model: provider/model-b
+model: opencode/glm-5.2
+variant: max
+reasoningEffort: max
 permission:
   edit: deny
   bash: deny
+  open_ultracode_configure_fusion: deny
 ---
 
 # OpenUltraCode Fusion Panel B

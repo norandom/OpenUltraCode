@@ -44,4 +44,35 @@ describe("high-effort request behavior", () => {
     assert.doesNotMatch(result.degradation?.userVisibleMessage ?? "", /hidden reasoning|chain-of-thought|bypass/i)
     assert.doesNotMatch(result.degradation?.safeNextAction ?? "", /hidden reasoning|chain-of-thought|bypass/i)
   })
+
+  it("never downgrades fusion max reasoning metadata", () => {
+    const params = {
+      reasoning_effort: "max",
+      reasoningEffort: "max",
+      reasoning: { effort: "max" },
+      options: {
+        reasoningEffort: "max"
+      }
+    }
+
+    const result = applyHighEffortRequestBehavior(
+      { enabled: true, effort: "xhigh", outputTokens: 64000 },
+      params
+    )
+
+    assert.deepEqual(result.appliedFields, [
+      "reasoning_effort",
+      "reasoningEffort",
+      "reasoning.effort",
+      "options.reasoningEffort"
+    ])
+    assert.deepEqual(params, {
+      reasoning_effort: "max",
+      reasoningEffort: "max",
+      reasoning: { effort: "max" },
+      options: {
+        reasoningEffort: "max"
+      }
+    })
+  })
 })

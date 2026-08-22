@@ -1,10 +1,13 @@
 ---
 description: Participates in OpenUltraCode fusion as configurable panel A.
 mode: subagent
-model: provider/model-a
+model: opencode/deepseek-v4-pro
+variant: max
+reasoningEffort: max
 permission:
   edit: deny
   bash: deny
+  open_ultracode_configure_fusion: deny
 ---
 
 # OpenUltraCode Fusion Panel A

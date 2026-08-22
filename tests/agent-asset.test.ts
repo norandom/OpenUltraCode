@@ -48,9 +48,9 @@ const agentExpectations: readonly AgentExpectation[] = [
 ] as const
 
 const fusionAgentFiles = [
-  "ultracode-fusion-panel-a.md",
-  "ultracode-fusion-panel-b.md",
-  "ultracode-fusion-arbiter.md"
+  ["ultracode-fusion-panel-a.md", "opencode/deepseek-v4-pro"],
+  ["ultracode-fusion-panel-b.md", "opencode/glm-5.2"],
+  ["ultracode-fusion-arbiter.md", "opencode/kimi-k3"]
 ] as const
 
 function readAgent(file: string): string {
@@ -62,7 +62,7 @@ describe("OpenUltraCode agent assets", () => {
     it(`${agent.file} has safe subagent guidance`, () => {
       const content = readAgent(agent.file)
 
-      assert.match(content, /^---\n[\s\S]+?\n---/)
+      assert.match(content, /^---\r?\n[\s\S]+?\r?\n---/)
       assert.match(content, /^description:\s*.+$/m)
       assert.match(content, /^mode:\s*subagent$/m)
       assert.match(content, /^permission:/m)
@@ -79,14 +79,18 @@ describe("OpenUltraCode agent assets", () => {
     })
   }
 
-  for (const file of fusionAgentFiles) {
+  for (const [file, model] of fusionAgentFiles) {
     it(`${file} is an explicit fusion-scoped model exception`, () => {
       const content = readAgent(file)
 
-      assert.match(content, /^---\n[\s\S]+?\n---/)
+      assert.match(content, /^---\r?\n[\s\S]+?\r?\n---/)
       assert.match(content, /^description:\s*.+$/m)
       assert.match(content, /^mode:\s*subagent$/m)
-      assert.match(content, /^model:\s*[^\s]+\/[^^\s]+$/m)
+      assert.match(content, new RegExp(`^model:\\s*${model.replace(/[.]/g, "\\.")}$`, "m"))
+      assert.match(content, /^variant:\s*max$/m)
+      assert.match(content, /^reasoningEffort:\s*max$/m)
+      assert.doesNotMatch(content, /^thinking:/m)
+      assert.match(content, /^ {2}open_ultracode_configure_fusion:\s*deny$/m)
       assert.match(content, /^permission:/m)
       assert.match(content, /fusion/i)
       assert.match(content, /supplied context/i)

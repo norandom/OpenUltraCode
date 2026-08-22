@@ -23,6 +23,10 @@ const requiredScaffoldPaths = [
   "src",
   ".opencode/plugins",
   ".opencode/plugins/open-ultracode.ts",
+  ".opencode/tools",
+  ".opencode/tools/open_ultracode_configure_fusion.ts",
+  ".opencode/lib",
+  ".opencode/lib/fusion-config.ts",
   ".opencode/skills/open-ultracode",
   ".opencode/agents",
   ".opencode/commands",
@@ -35,6 +39,7 @@ const requiredCommandAssets = [
   "ultracode.md",
   "ultracode-debug.md",
   "ultracode-fusion.md",
+  "ultracode-fusion-models.md",
   "ultracode-spec-audit.md",
   "ultracode-research.md",
   "ultracode-verify.md",
@@ -67,6 +72,7 @@ export function validateAssets(root = process.cwd()): AssetValidationResult {
   }
 
   validatePlugin(root, errors)
+  validateFusionConfigTool(root, errors)
   validateOpenCodeConfig(root, errors)
   validateSkill(root, errors)
   validateCommands(root, errors)
@@ -91,6 +97,9 @@ function validateOpenCodeConfig(root: string, errors: string[]): void {
   }
   if (!isRecord(config.skills) || !arrayEquals(config.skills.paths, [".opencode/skills"])) {
     errors.push(`${relativePath} must register .opencode/skills in skills.paths`)
+  }
+  if (!isRecord(config.permission) || config.permission.open_ultracode_configure_fusion !== "ask") {
+    errors.push(`${relativePath} must ask before open_ultracode_configure_fusion mutations`)
   }
   if ("model" in config || "provider" in config) {
     errors.push(`${relativePath} must not configure model or provider routing`)
@@ -134,6 +143,10 @@ function validateCommands(root: string, errors: string[]): void {
       errors.push(`${relativePath} frontmatter must include description`)
     }
     rejectModelOverride(relativePath, document, errors)
+    if (fileName === "ultracode-fusion-models.md") {
+      requireBody(relativePath, document.body, [/\$ARGUMENTS/, /open_ultracode_configure_fusion/i, /provider\/model/i, /selected model/i], errors)
+      continue
+    }
     requireBody(relativePath, document.body, [/\$ARGUMENTS/, /selected model/i, /Workflow mode:/i], errors)
     if (!/missing task context|not provide enough task context/i.test(document.body)) {
       errors.push(`${relativePath} must ask focused questions when task context is missing`)
@@ -159,6 +172,7 @@ function validateAgents(root: string, errors: string[]): void {
     validateAgentPermissions(relativePath, document, errors)
     if (fusionAgentPattern.test(fileName)) {
       requireBody(relativePath, document.body, [/fusion/i, /supplied context/i, /structured round output/i], errors)
+      validateFusionAgentOptions(relativePath, document, errors)
     } else {
       requireBody(relativePath, document.body, [/inherit the active selected model/i, /do not change provider/i, /structured output/i], errors)
     }
@@ -173,6 +187,44 @@ function validateAgents(root: string, errors: string[]): void {
     if (document !== undefined) {
       rejectModelOverride(relativePath, document, errors)
     }
+  }
+}
+
+function validateFusionConfigTool(root: string, errors: string[]): void {
+  const relativePath = ".opencode/tools/open_ultracode_configure_fusion.ts"
+  const content = readAsset(root, relativePath, errors)
+  if (content === undefined) return
+
+  for (const pattern of [
+    /from\s+["']@opencode-ai\/plugin["']/,
+    /export\s+default\s+tool\s*\(/,
+    /args\s*:/,
+    /panelA\s*:/,
+    /panelB\s*:/,
+    /decider\s*:/,
+    /\.optional\s*\(\s*\)/,
+    /configureFusionModels\s*\(/,
+    /context\.worktree/
+  ]) {
+    if (!pattern.test(content)) {
+      errors.push(`${relativePath} is missing required OpenCode tool structure: ${pattern.source}`)
+    }
+  }
+}
+
+function validateFusionAgentOptions(relativePath: string, document: FrontmatterDocument, errors: string[]): void {
+  const model = document.frontmatter.get("model")
+  if (model === undefined || !/^[A-Za-z0-9][A-Za-z0-9._-]*\/[^\s#]+$/u.test(model)) {
+    errors.push(`${relativePath} model must be a provider/model reference without an inline variant`)
+  }
+  if (document.frontmatter.get("variant") !== "max") {
+    errors.push(`${relativePath} frontmatter must set variant: max`)
+  }
+  if (document.frontmatter.get("reasoningEffort") !== "max") {
+    errors.push(`${relativePath} frontmatter must set reasoningEffort: max`)
+  }
+  if (!/^ {2}open_ultracode_configure_fusion:\s*deny\s*$/mu.test(document.frontmatterSource)) {
+    errors.push(`${relativePath} must deny open_ultracode_configure_fusion`)
   }
 }
 
@@ -221,7 +273,8 @@ function readFrontmatter(root: string, relativePath: string, errors: string[]): 
   const content = readAsset(root, relativePath, errors)
   if (content === undefined) return undefined
 
-  const match = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/u.exec(content)
+  const normalizedContent = content.replace(/\r\n/gu, "\n")
+  const match = /^---\n([\s\S]*?)\n---\n?([\s\S]*)$/u.exec(normalizedContent)
   if (match === null) {
     errors.push(`${relativePath} must include YAML frontmatter`)
     return undefined

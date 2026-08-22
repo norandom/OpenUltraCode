@@ -14,14 +14,14 @@ $ARGUMENTS
 
 Keep the current selected model as the coordinator. Do not introduce a proxy, synthetic model ID, provider route, hidden model switch, or transparent all-prompt fusion.
 
-If `$ARGUMENTS` does not provide enough task context, ask focused questions for the missing goal, panel selection, decider, strategy, scope, constraints, or acceptance criteria before proceeding.
+If `$ARGUMENTS` does not provide enough task context, ask focused questions for the missing goal, strategy, scope, constraints, or acceptance criteria before proceeding. Panel and decider flags are optional because the configured fusion roles provide defaults.
 
 Default strategy: `critique-revise-vote`.
 
 Selection requirements:
 
-- Require exactly two `--panel <fusion-agent-id>` selections, or a preset that expands to exactly two fusion panel agents.
-- Support `--decider selected-model` or `--decider <fusion-arbiter-agent-id>`.
+- With zero `--panel` flags, use exactly `ultracode-fusion-panel-a` and `ultracode-fusion-panel-b`; exactly two `--panel <fusion-agent-id>` flags override that pair for this run, and one panel flag is invalid.
+- With no `--decider` flag, use `ultracode-fusion-arbiter`; support `--decider selected-model` or `--decider <fusion-arbiter-agent-id>` as a one-run override.
 - Reject unknown agents, non-fusion agents, invalid panel counts, or invalid deciders before launching subagents.
 - Treat `selected-model` as the current selected opencode model acting as coordinator and final arbiter.
 

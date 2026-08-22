@@ -27,6 +27,7 @@ Slash commands are what you type in opencode:
 - `/ultracode-research` for adversarial research against a plan or claim.
 - `/ultracode-verify` for evidence-based completion checks.
 - `/ultracode-fusion` for explicit two-model fusion rounds with a selected decider.
+- `/ultracode-fusion-models` to show or change the persistent panel and decider model IDs.
 - `/ultrathink` for grounded, non-coding problem solving.
 - `/ultrathink-fusion` for grounded, non-coding two-panel fusion problem solving.
 
@@ -36,7 +37,7 @@ Supporting assets:
 
 - Role agents for coordinator, planner, implementer, adversary, reconciler, verifier, and researcher workflows.
 - Fusion agents for panel and arbiter roles. These are intentionally separate from the normal workflow agents.
-- Plugin tools for workflow status, verification evidence, blocked checks, and completion reports.
+- Plugin tools for fusion model configuration, workflow status, verification evidence, blocked checks, and completion reports.
 
 ## Examples
 
@@ -67,7 +68,7 @@ Adversarial research:
 Fusion workflow:
 
 ```text
-/ultracode-fusion --panel ultracode-fusion-panel-a --panel ultracode-fusion-panel-b --decider selected-model "Compare the two proposed API designs and produce one implementation recommendation."
+/ultracode-fusion "Compare the two proposed API designs and produce one implementation recommendation."
 ```
 
 Fusion with an arbiter agent:
@@ -85,7 +86,7 @@ Grounded problem solving without coding:
 Grounded fusion problem solving:
 
 ```text
-/ultrathink-fusion --panel ultracode-fusion-panel-a --panel ultracode-fusion-panel-b --decider selected-model "Evaluate the product tradeoff using grounded evidence, not loose recall."
+/ultrathink-fusion "Evaluate the product tradeoff using grounded evidence, not loose recall."
 ```
 
 `/ultrathink` and `/ultrathink-fusion` are not coding commands. They separate supplied facts, verified evidence, assumptions, hypotheses, and recommendations. If the problem depends on facts that are not supplied, they should ask for context or mark the point as unknown instead of drifting into loose recall.
@@ -95,20 +96,31 @@ Grounded fusion problem solving:
 `/ultracode-fusion` is explicit opt-in fusion, not transparent routing for every prompt. A run has three model-bearing roles:
 
 - The selected opencode model remains the coordinator. It gathers context, validates arguments, dispatches rounds, and reports the final trace.
-- Exactly two panel agents produce and critique candidate answers. Pass them with repeated `--panel <agent-name>` flags.
-- The decider is either `selected-model` or a configured fusion arbiter agent passed with `--decider <agent-name>`.
+- Exactly two panel agents produce and critique candidate answers. The configured panel pair is the default; repeated `--panel <agent-name>` flags can override it for one run.
+- The configured fusion arbiter is the default decider. `--decider selected-model` or `--decider <fusion-arbiter-agent-name>` can override it for one run.
 
 The default fusion concept is `critique-revise-vote`: each panel generates an answer from the same bounded context package, critiques the other panel's answer, revises its own answer, ranks the alternatives against the rubric, and then the decider arbitrates the final response.
 
-The bundled placeholders are:
+The bundled defaults use exact OpenCode Zen catalog references and select each model's native maximum-reasoning variant:
 
-- `ultracode-fusion-panel-a` with `model: provider/model-a`.
-- `ultracode-fusion-panel-b` with `model: provider/model-b`.
-- `ultracode-fusion-arbiter` with `model: provider/arbiter-model`.
+- `ultracode-fusion-panel-a`: `opencode/deepseek-v4-pro#max` (DeepSeek V4 Pro at max reasoning; there is no direct model named “DeepSeek V4 Max”).
+- `ultracode-fusion-panel-b`: `opencode/glm-5.2#max`.
+- `ultracode-fusion-arbiter`: `opencode/kimi-k3#max`.
 
-The release installer replaces those placeholders for you. It reads the current `model` from `~/.config/opencode/opencode.json`, then lets you choose each fusion role with a small terminal menu using the up and down arrows. The default for panel A, panel B, and arbiter is `openai/gpt-5`; you can pick the current opencode model if it differs, or enter a custom `provider/model-id`. In non-interactive shells, the installer uses `openai/gpt-5` for all three fusion roles.
+The OpenCode Zen defaults require that provider to be connected. The direct-provider equivalents are `deepseek/deepseek-v4-pro#max`, `zai/glm-5.2#max`, and `moonshotai/kimi-k3#max`; those require the corresponding providers to be connected in OpenCode. The dated `deepseek-v4-pro-0813` identifier is an OpenRouter snapshot, not the direct DeepSeek ID.
 
-You can also edit the installed agent files manually and replace those placeholder model IDs with opencode model IDs that exist in your configured providers, such as `openai/gpt-5`, another GPT-5-family model, DeepSeek, or a local/provider-specific model. The command rejects runs that do not provide exactly two fusion panel agents or that name a decider outside `selected-model` or a fusion arbiter agent.
+The release installer's terminal menu uses the up and down arrows and lets you keep these role-specific defaults, retain each role's existing value during reinstall, pick the current OpenCode model, or enter a custom model reference. Fresh non-interactive installs use the three defaults above; reinstalls preserve existing role models.
+
+Show the effective configuration or change any subset of the roles from OpenCode:
+
+```text
+/ultracode-fusion-models
+/ultracode-fusion-models --panel-a deepseek/deepseek-v4-pro#max --panel-b zai/glm-5.2#max --decider moonshotai/kimi-k3#max
+```
+
+The configuration command accepts `provider/model` or `provider/model#max`, checks the live `opencode models --verbose` catalog when shell access is available, and changes only the effective fusion agent files. Non-`max` variants are rejected so they cannot override the required effort. The tool asks for mutation permission, uses temporary files plus stale-content checks and best-effort rollback, and does not modify credentials or the selected coordinator model. Quit and restart OpenCode after changing the models so it reloads the agent metadata.
+
+All three bundled models expose a `max` reasoning effort and every fusion agent also sets `reasoningEffort: max`. No shared `thinking` object is injected: provider-specific thinking payloads differ, and Kimi K3 does not accept the same toggle used by some other providers.
 
 One-shot independent answers are reported as `panel-consult`, not strong fusion. Strong fusion requires the critique, revision, vote, and arbitration loop.
 

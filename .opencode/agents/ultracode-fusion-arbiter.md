@@ -1,10 +1,13 @@
 ---
 description: Arbitrates OpenUltraCode fusion results when explicitly selected as the decider.
 mode: subagent
-model: provider/arbiter-model
+model: opencode/kimi-k3
+variant: max
+reasoningEffort: max
 permission:
   edit: deny
   bash: deny
+  open_ultracode_configure_fusion: deny
 ---
 
 # OpenUltraCode Fusion Arbiter

@@ -3,5 +3,8 @@
   "plugin": ["./.opencode/plugins/open-ultracode.ts"],
   "skills": {
     "paths": [".opencode/skills"]
+  },
+  "permission": {
+    "open_ultracode_configure_fusion": "ask"
   }
 }
