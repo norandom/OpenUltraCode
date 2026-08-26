@@ -6,16 +6,39 @@ It uses no proxy. It does not replace the selected model, create synthetic model
 
 ## Install
 
+### Prerequisites
+
+- [opencode](https://opencode.ai) is installed and on your `PATH`.
+- For the development path only: Node.js 22+ and `pnpm` (the repo pins `pnpm@11.4.0` via Corepack).
+
+### Release install (recommended)
+
 1. Install the latest release with `curl -fsSL https://raw.githubusercontent.com/norandom/OpenUltraCode/main/install.sh | sh`.
-2. If you already have a checkout and want the development path, run `./install-dev.sh` from the repo root.
-3. The release installer pulls the latest GitHub release asset, copies the skill, slash commands, and agents into `~/.config/opencode/`, asks which fusion model IDs to set, and registers the plugin path in `~/.config/opencode/opencode.json`.
-4. Quit and restart opencode so the global plugin, commands, skills, and agents are loaded.
 
-The restart matters because opencode loads plugins, commands, skills, agents, and config at startup. If `/ultracode` does not appear, confirm you restarted opencode after running `install.sh` or `install-dev.sh`.
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/norandom/OpenUltraCode/main/install.sh | sh
+   ```
 
-Release installs do not run Dagger or `pnpm run check` on the user's machine. The GitHub Actions release workflow runs build, ESLint, tests, and asset validation, then publishes `open-ultracode-release.tar.gz` as the GitHub release asset consumed by `install.sh`.
+The installer pulls the latest GitHub release asset, copies the skill, slash commands, and agents into `~/.config/opencode/`, prompts you to choose the fusion model IDs, and registers the plugin path in `~/.config/opencode/opencode.json`.
 
-Development installs use pnpm with a 3-day release-age cooldown (`minimumReleaseAge: 4320` in `pnpm-workspace.yaml`). That keeps brand-new package releases out of the install path. `pnpm-workspace.yaml` allows the `esbuild` install script because the TypeScript test runner needs it. `install-dev.sh` also configures the repository pre-commit hook to run Dagger-backed ESLint through `pnpm run lint`.
+### Development install
+
+From a checkout of this repo:
+
+```sh
+./install-dev.sh
+```
+
+This also configures the repository pre-commit hook to run Dagger-backed ESLint through `pnpm run lint`.
+
+### Restart opencode
+
+Quit and restart opencode so the global plugin, commands, skills, and agents are loaded. opencode reads plugins, commands, skills, agents, and config only at startup, so this step is required. If `/ultracode` does not appear after restarting, re-run `install.sh` or `install-dev.sh` and restart again.
+
+### Install notes
+
+- **Release installs** do not run Dagger or `pnpm run check` on your machine. The GitHub Actions release workflow runs build, ESLint, tests, and asset validation, then publishes `open-ultracode-release.tar.gz`, which `install.sh` consumes.
+- **Development installs** use pnpm with a 3-day release-age cooldown (`minimumReleaseAge: 4320` in `pnpm-workspace.yaml`) to keep brand-new package releases out of the install path. `pnpm-workspace.yaml` allows the `esbuild` install script because the TypeScript test runner needs it.
 
 ## What you get
 
