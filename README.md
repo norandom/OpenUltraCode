@@ -13,11 +13,11 @@ It uses no proxy. It does not replace the selected model, create synthetic model
 
 ### Release install (recommended)
 
-1. Install the latest release with `curl -fsSL https://raw.githubusercontent.com/norandom/OpenUltraCode/main/install.sh | sh`.
+Install the latest release:
 
-   ```sh
-   curl -fsSL https://raw.githubusercontent.com/norandom/OpenUltraCode/main/install.sh | sh
-   ```
+```sh
+curl -fsSL https://raw.githubusercontent.com/norandom/OpenUltraCode/main/install.sh | sh
+```
 
 The installer pulls the latest GitHub release asset, copies the skill, slash commands, and agents into `~/.config/opencode/`, prompts you to choose the fusion model IDs, and registers the plugin path in `~/.config/opencode/opencode.json`.
 
@@ -29,11 +29,11 @@ From a checkout of this repo:
 ./install-dev.sh
 ```
 
-This also configures the repository pre-commit hook to run Dagger-backed ESLint through `pnpm run lint`.
+`install-dev.sh` also configures the repository pre-commit hook to run Dagger-backed ESLint through `pnpm run lint`.
 
 ### Restart opencode
 
-Quit and restart opencode so the global plugin, commands, skills, and agents are loaded. opencode reads plugins, commands, skills, agents, and config only at startup, so this step is required. If `/ultracode` does not appear after restarting, re-run `install.sh` or `install-dev.sh` and restart again.
+Quit and restart opencode so the global plugin, commands, skills, and agents are loaded. opencode reads plugins, commands, skills, agents, and config only at startup, so this step is required. If `/ultracode` does not appear, first confirm you restarted opencode after running `install.sh` or `install-dev.sh`; if it still does not appear, re-run the installer and restart again.
 
 ### Install notes
 
