@@ -51,7 +51,9 @@ jobs:
             pnpm-workspace.yaml \
             tsconfig.json \
             install.sh \
-            install-dev.sh
+            install-dev.sh \
+            install.ps1 \
+            install-dev.ps1
 
       - name: Publish GitHub release
         env:

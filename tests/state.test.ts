@@ -111,7 +111,7 @@ describe("workflow state store", () => {
     const outsideRoot = join(parent, "outside")
     await mkdir(join(projectRoot, ".opencode", "open-ultracode"), { recursive: true })
     await mkdir(outsideRoot)
-    await symlink(outsideRoot, join(projectRoot, ".opencode", "open-ultracode", "state"), "dir")
+    await symlink(outsideRoot, join(projectRoot, ".opencode", "open-ultracode", "state"), process.platform === "win32" ? "junction" : "dir")
     const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
 
     await assert.rejects(() => store.update(createState()), /state.directory must not contain symlinks/)
@@ -127,7 +127,7 @@ describe("workflow state store", () => {
     await mkdir(join(projectRoot, ".opencode", "open-ultracode"), { recursive: true })
     await mkdir(outsideRoot)
     await writeFile(join(outsideRoot, "workflow-state.json"), "not json", "utf8")
-    await symlink(outsideRoot, join(projectRoot, ".opencode", "open-ultracode", "state"), "dir")
+    await symlink(outsideRoot, join(projectRoot, ".opencode", "open-ultracode", "state"), process.platform === "win32" ? "junction" : "dir")
     const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
 
     await assert.rejects(() => store.load(), /state.directory must not contain symlinks/)

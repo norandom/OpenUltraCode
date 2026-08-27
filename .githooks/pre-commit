@@ -1,4 +1,8 @@
 #!/usr/bin/env sh
 set -eu
 
-pnpm run lint
+if command -v dagger >/dev/null 2>&1; then
+  pnpm run lint
+else
+  pnpm run eslint
+fi
