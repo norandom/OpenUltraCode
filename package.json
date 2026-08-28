@@ -11,6 +11,8 @@
     "README.md",
     "install.sh",
     "install-dev.sh",
+    "install.ps1",
+    "install-dev.ps1",
     "eslint.config.js",
     "dagger.json",
     ".dagger",

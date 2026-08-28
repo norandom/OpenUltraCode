@@ -6,12 +6,12 @@ It uses no proxy. It does not replace the selected model, create synthetic model
 
 ## Install
 
-1. Install the latest release with `curl -fsSL https://raw.githubusercontent.com/norandom/OpenUltraCode/main/install.sh | sh`.
-2. If you already have a checkout and want the development path, run `./install-dev.sh` from the repo root.
+1. Install the latest release with `curl -fsSL https://raw.githubusercontent.com/norandom/OpenUltraCode/main/install.sh | sh`. On Windows (PowerShell), run `irm https://raw.githubusercontent.com/norandom/OpenUltraCode/main/install.ps1 | iex`.
+2. If you already have a checkout and want the development path, run `./install-dev.sh` (or `.\install-dev.ps1` on Windows) from the repo root.
 3. The release installer pulls the latest GitHub release asset, copies the skill, slash commands, and agents into `~/.config/opencode/`, asks which fusion model IDs to set, and registers the plugin path in `~/.config/opencode/opencode.json`.
 4. Quit and restart opencode so the global plugin, commands, skills, and agents are loaded.
 
-The restart matters because opencode loads plugins, commands, skills, agents, and config at startup. If `/ultracode` does not appear, confirm you restarted opencode after running `install.sh` or `install-dev.sh`.
+The restart matters because opencode loads plugins, commands, skills, agents, and config at startup. If `/ultracode` does not appear, confirm you restarted opencode after running `install.sh`, `install-dev.sh`, `install.ps1`, or `install-dev.ps1`.
 
 Release installs do not run Dagger or `pnpm run check` on the user's machine. The GitHub Actions release workflow runs build, ESLint, tests, and asset validation, then publishes `open-ultracode-release.tar.gz` as the GitHub release asset consumed by `install.sh`.
 

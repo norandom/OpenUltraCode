@@ -19,6 +19,8 @@ const requiredScaffoldPaths = [
   "tsconfig.json",
   "install.sh",
   "install-dev.sh",
+  "install.ps1",
+  "install-dev.ps1",
   ".github/workflows/release.yml",
   "src",
   ".opencode/plugins",
