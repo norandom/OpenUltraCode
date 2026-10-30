@@ -6,12 +6,12 @@ Model selection is up to you. OpenUltraCode uses no proxy and does not replace t
 
 ## Quick start
 
-1. Install the latest release with `curl -fsSL https://raw.githubusercontent.com/norandom/OpenUltraCode/main/install.sh | sh`.
-2. If you already have a checkout and want the development path, run `./install-dev.sh` from the repo root.
+1. Install the latest release with `curl -fsSL https://raw.githubusercontent.com/norandom/OpenUltraCode/main/install.sh | sh`. On Windows (PowerShell), run `irm https://raw.githubusercontent.com/norandom/OpenUltraCode/main/install.ps1 | iex`.
+2. If you already have a checkout and want the development path, run `./install-dev.sh` (or `.\install-dev.ps1` on Windows) from the repo root.
 3. The release installer pulls the latest GitHub release asset, copies the skill, slash commands, and agents into `~/.config/opencode/`, runs the init dialogue that asks which fusion model IDs to set, and registers the plugin package directory in the `plugins` array of `~/.config/opencode/opencode.json`. OpenCode 2 loads local plugins from directories (for example `.opencode/plugins/open-ultracode/index.ts`) via `{ "package": "<path>" }` entries, not from single `.ts` files under the V1 `plugin` key.
 4. Quit and restart opencode so the global plugin, commands, skills, and agents are loaded.
 
-The restart matters because opencode loads plugins, commands, skills, agents, and config at startup. If `/ultracode` does not appear, confirm you restarted opencode after running `install.sh` or `install-dev.sh`.
+The restart matters because opencode loads plugins, commands, skills, agents, and config at startup. If `/ultracode` does not appear, confirm you restarted opencode after running `install.sh`, `install-dev.sh`, `install.ps1`, or `install-dev.ps1`.
 
 Release installs do not run Dagger or `pnpm run check` on your machine. The GitHub Actions release workflow runs build, ESLint, tests, and asset validation, then publishes `open-ultracode-release.tar.gz` as the GitHub release asset consumed by `install.sh`. Development installs use pnpm with a 3-day release-age cooldown (`minimumReleaseAge: 4320` in `pnpm-workspace.yaml`), and `install-dev.sh` also configures the repository pre-commit hook to run Dagger-backed ESLint through `pnpm run lint`.
 

@@ -25,6 +25,8 @@ const requiredScaffoldPaths = [
   "scripts/validate-assets.ts",
   "install.sh",
   "install-dev.sh",
+  "install.ps1",
+  "install-dev.ps1",
   ".github/workflows/release.yml",
   "pnpm-workspace.yaml"
 ] as const
@@ -49,6 +51,8 @@ describe("OpenUltraCode scaffold", () => {
     const pnpmWorkspace = readFileSync(join(projectRoot, "pnpm-workspace.yaml"), "utf8")
     const installer = readFileSync(join(projectRoot, "install.sh"), "utf8")
     const devInstaller = readFileSync(join(projectRoot, "install-dev.sh"), "utf8")
+    const psInstaller = readFileSync(join(projectRoot, "install.ps1"), "utf8")
+    const psDevInstaller = readFileSync(join(projectRoot, "install-dev.ps1"), "utf8")
     const releaseWorkflow = readFileSync(join(projectRoot, ".github/workflows/release.yml"), "utf8")
 
     assert.equal(config.$schema, "https://opencode.ai/config.json")
@@ -73,6 +77,11 @@ describe("OpenUltraCode scaffold", () => {
     assert.match(installer, /config\.plugins\.push\(\{ package: pluginPath \}\)/)
     assert.match(installer, /legacyFusionPlaceholders/)
     assert.match(devInstaller, /legacyFusionPlaceholders/)
+    assert.match(psInstaller, /DefaultFusionPanelAModel = "opencode\/deepseek-v4-pro#max"/)
+    assert.match(psInstaller, /DefaultFusionPanelBModel = "opencode\/glm-5\.2#max"/)
+    assert.match(psInstaller, /DefaultFusionArbiterModel = "opencode\/kimi-k3#max"/)
+    assert.match(psInstaller, /legacyFusionPlaceholders/)
+    assert.match(psDevInstaller, /legacyFusionPlaceholders/)
     assert.match(installer, /read_current_model\(\)/)
     assert.match(installer, /select_from_menu\(\)/)
     assert.match(installer, /releases\/latest\/download\/open-ultracode-release\.tar\.gz/)
@@ -87,6 +96,7 @@ describe("OpenUltraCode scaffold", () => {
     assert.match(devInstaller, /pnpm install --frozen-lockfile/)
     assert.match(devInstaller, /pnpm run check/)
     assert.match(devInstaller, /git config core\.hooksPath \.githooks/)
+    assert.match(psDevInstaller, /pnpm install --frozen-lockfile/)
     assert.match(releaseWorkflow, /open-ultracode-release\.tar\.gz/)
     assert.match(releaseWorkflow, /gh release create/)
     assert.match(releaseWorkflow, /--prerelease/)
@@ -99,6 +109,8 @@ describe("OpenUltraCode scaffold", () => {
       "README.md",
       "install.sh",
       "install-dev.sh",
+      "install.ps1",
+      "install-dev.ps1",
       "eslint.config.js",
       "dagger.json",
       ".dagger",
@@ -215,7 +227,7 @@ function createAssetFixture(): string {
       lint: "dagger call lint --source .",
       check: "pnpm run build && pnpm run lint && pnpm run test && pnpm run validate:assets"
     },
-    files: [".opencode", "src", "docs", "scripts/validate-assets.ts", "README.md", "install.sh", "install-dev.sh", "eslint.config.js", "dagger.json", ".dagger", ".githooks", "opencode.json", "pnpm-workspace.yaml"]
+    files: [".opencode", "src", "docs", "scripts/validate-assets.ts", "README.md", "install.sh", "install-dev.sh", "install.ps1", "install-dev.ps1", "eslint.config.js", "dagger.json", ".dagger", ".githooks", "opencode.json", "pnpm-workspace.yaml"]
   }))
   writeFileSync(
     join(root, "opencode.json"),
@@ -230,6 +242,8 @@ function createAssetFixture(): string {
   writeFileSync(join(root, "README.md"), "# OpenUltraCode\n")
   writeFileSync(join(root, "install.sh"), "#!/usr/bin/env sh\n")
   writeFileSync(join(root, "install-dev.sh"), "#!/usr/bin/env sh\n")
+  writeFileSync(join(root, "install.ps1"), "# PowerShell installer\n")
+  writeFileSync(join(root, "install-dev.ps1"), "# PowerShell dev installer\n")
   writeFileSync(join(root, ".github/workflows/release.yml"), "name: Release\n")
   writeFileSync(join(root, "pnpm-workspace.yaml"), "allowBuilds:\n  esbuild: true\nminimumReleaseAge: 4320\n")
   writeFileSync(join(root, "scripts/validate-assets.ts"), "")
