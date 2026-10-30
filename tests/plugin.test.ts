@@ -7,112 +7,215 @@ import { describe, it } from "node:test"
 import {
   OpenUltraCodePlugin,
   createWorkflowStateStore,
-  type CompletionReportTool,
-  type OpenUltraCodeHooks,
-  type RecordBlockedCheckTool,
-  type RecordVerificationTool,
+  type OpenCodePluginContext,
+  type SessionCompactionEvent,
+  type SessionContextEvent,
+  type SessionPromptEvent,
+  type ToolDefinition,
+  type ToolExecuteAfterEvent,
   type VerificationEvidence,
-  type WorkflowState,
-  type WorkflowStatusTool
+  type WorkflowState
 } from "../src/index.js"
 
 const stateDirectory = ".opencode/open-ultracode/state"
 const stateFile = join(stateDirectory, "workflow-state.json")
 
-describe("OpenUltraCode plugin entry point", () => {
-  it("returns no operational hooks when disabled", async () => {
-    const hooks = await OpenUltraCodePlugin({ directory: await createProjectRoot() }, { enabled: false })
+interface FakeContext extends OpenCodePluginContext {
+  readonly sessionHooks: Map<string, (event: never) => unknown>
+  readonly permissionHooks: Array<(event: never) => unknown>
+  readonly toolHooks: Map<string, (event: never) => unknown>
+  readonly toolDefinitions: ToolDefinition[]
+  readonly events: Array<{ type: string; data: Record<string, unknown> }>
+  readonly emit: (event: { type: string; data: Record<string, unknown> }) => void
+  readonly permissionRequests: Map<string, { action: string; resources: readonly string[]; message?: string }>
+}
 
-    assert.deepEqual(hooks, {})
-  })
+function createFakeContext(directory: string, options: unknown): FakeContext {
+  const sessionHooks = new Map<string, (event: never) => unknown>()
+  const permissionHooks: Array<(event: never) => unknown> = []
+  const toolHooks = new Map<string, (event: never) => unknown>()
+  const toolDefinitions: ToolDefinition[] = []
+  const events: Array<{ type: string; data: Record<string, unknown> }> = []
+  const listeners: Array<(event: { type: string; data: Record<string, unknown> }) => void> = []
+  const permissionRequests = new Map<string, { action: string; resources: readonly string[]; message?: string }>()
 
-  it("loads in enabled mode without changing selected provider or model", async () => {
-    const hooks = await OpenUltraCodePlugin({ directory: await createProjectRoot() }, { enabled: true })
-
-    assert.equal("model" in hooks, false)
-    assert.equal("provider" in hooks, false)
-  })
-
-  it("registers a compaction hook that returns minimal workflow continuity context", async () => {
-    const projectRoot = await createProjectRoot()
-    const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
-    await store.update(createState())
-    const hooks = await OpenUltraCodePlugin({ directory: projectRoot }, { enabled: true })
-
-    const context = await getCompactionHook(hooks)()
-
-    assert.match(context, /OpenUltraCode workflow continuity/i)
-    assert.match(context, /Mode: build/)
-    assert.match(context, /Phase: verification/)
-    assert.match(context, /Goal: Preserve workflow context across compaction\./)
-    assert.match(context, /Constraints:\n- Stay within Plugin Runtime\./)
-    assert.match(context, /Assumptions:\n- State contains summaries only\./)
-    assert.match(context, /Open findings:\n- F-1 \[high\/medium\] Unresolved tool regression/)
-    assert.doesNotMatch(context, /Rejected false positive/)
-    assert.match(context, /Verification:\n- VE-1 \[test:pass\] Plugin test passed\./)
-    assert.match(context, /VE-2 \[audit:not-run\] Audit not run yet\. Reason: Pending implementation\. Residual risk: Security gap unknown\./)
-    assert.match(context, /Degradation notices:\n- D-1 \[warning\] compaction hook: Hook payload is experimental\./)
-    assert.match(context, /Completion: partial - Implementation complete; verification remains partial\./)
-  })
-
-  it("registers exact opencode compaction and continuation hook keys", async () => {
-    const projectRoot = await createProjectRoot()
-    const hooks = await OpenUltraCodePlugin({ directory: projectRoot }, { enabled: true })
-
-    assert.equal(typeof hooks["experimental.session.compacting"], "function")
-    assert.equal(typeof hooks["experimental.compaction.autocontinue"], "function")
-    assert.equal(typeof hooks["command.execute.before"], "function")
-    assert.equal(typeof hooks["permission.ask"], "function")
-    assert.equal(typeof hooks["tool.execute.after"], "function")
-    assert.equal(typeof hooks.tool?.open_ultracode_status?.execute, "function")
-    assert.equal(typeof hooks.tool?.open_ultracode_record_verification?.execute, "function")
-    assert.equal(typeof hooks.tool?.open_ultracode_record_blocked_check?.execute, "function")
-    assert.equal(typeof hooks.tool?.open_ultracode_completion_report?.execute, "function")
-    assert.equal("experimental" in hooks, false)
-  })
-
-  it("announces when an OpenUltraCode command activates", async () => {
-    const hooks = await OpenUltraCodePlugin({ directory: await createProjectRoot() }, { enabled: true })
-    const output: { parts: unknown[] } = { parts: [] }
-
-    await getCommandExecuteBeforeHook(hooks)({ command: "ultracode-debug" }, output)
-
-    assert.deepEqual(output.parts, [
-      {
-        type: "text",
-        text: "OpenUltraCode mode active: debug. The active selected opencode model is preserved; workflow status, degradation notices, and verification gates are available."
+  const ctx: FakeContext = {
+    location: { directory },
+    options,
+    sessionHooks,
+    permissionHooks,
+    toolHooks,
+    toolDefinitions,
+    events,
+    permissionRequests,
+    emit(event) {
+      events.push(event)
+      for (const listener of listeners) listener(event)
+    },
+    session: {
+      hook(name: string, callback: (event: never) => unknown) {
+        sessionHooks.set(name, callback)
+        return Promise.resolve({ dispose: () => Promise.resolve() })
       }
-    ])
+    } as unknown as OpenCodePluginContext["session"],
+    permission: {
+      hook(_name: string, callback: (event: never) => unknown) {
+        permissionHooks.push(callback)
+        return Promise.resolve({ dispose: () => Promise.resolve() })
+      },
+      get(input: { sessionID: string; requestID: string }) {
+        const request = permissionRequests.get(input.requestID)
+        if (request === undefined) {
+          return Promise.reject(new Error("unknown permission request"))
+        }
+        return Promise.resolve({ data: request })
+      }
+    } as unknown as OpenCodePluginContext["permission"],
+    tool: {
+      hook(name: string, callback: (event: never) => unknown) {
+        toolHooks.set(name, callback)
+        return Promise.resolve({ dispose: () => Promise.resolve() })
+      },
+      transform(callback: (editor: { add(tool: ToolDefinition): void }) => void) {
+        const editor = {
+          add(tool: ToolDefinition) {
+            toolDefinitions.push(tool)
+          }
+        }
+        callback(editor)
+        return Promise.resolve({ dispose: () => Promise.resolve() })
+      }
+    } as unknown as OpenCodePluginContext["tool"],
+    event: {
+      subscribe(options?: { types?: string[]; signal?: AbortSignal }) {
+        const types = options?.types
+        const signal = options?.signal
+        const queue: Array<{ type: string; data: Record<string, unknown> }> = []
+        const waiters: Array<() => void> = []
+        listeners.push((event) => {
+          if (types === undefined || types.includes(event.type)) {
+            queue.push(event)
+            for (const waiter of waiters.splice(0)) waiter()
+          }
+        })
+        return {
+          async *[Symbol.asyncIterator]() {
+            for (;;) {
+              if (signal?.aborted) return
+              while (queue.length > 0) {
+                const event = queue.shift()
+                if (event !== undefined) yield event
+              }
+              await new Promise<void>((resolve) => {
+                waiters.push(resolve)
+                signal?.addEventListener("abort", () => resolve(), { once: true })
+              })
+            }
+          }
+        }
+      }
+    } as unknown as OpenCodePluginContext["event"]
+  }
+
+  return ctx
+}
+
+async function setupPlugin(directory: string, options: unknown): Promise<FakeContext> {
+  const ctx = createFakeContext(directory, options)
+  await OpenUltraCodePlugin.setup(ctx)
+  return ctx
+}
+
+async function createProjectRoot(): Promise<string> {
+  return mkdtemp(join(tmpdir(), "open-ultracode-plugin-"))
+}
+
+function getSessionHook(ctx: FakeContext, name: string): (event: never) => unknown {
+  const hook = ctx.sessionHooks.get(name)
+  if (hook === undefined) {
+    throw new TypeError(`session hook ${name} is missing`)
+  }
+  return hook
+}
+
+function getToolHook(ctx: FakeContext, name: string): (event: never) => unknown {
+  const hook = ctx.toolHooks.get(name)
+  if (hook === undefined) {
+    throw new TypeError(`tool hook ${name} is missing`)
+  }
+  return hook
+}
+
+function getTool(ctx: FakeContext, name: string): ToolDefinition {
+  const tool = ctx.toolDefinitions.find((definition) => definition.name === name)
+  if (tool === undefined) {
+    throw new TypeError(`tool ${name} is missing`)
+  }
+  return tool
+}
+
+async function executeTool(ctx: FakeContext, name: string, input: unknown): Promise<unknown> {
+  const tool = getTool(ctx, name)
+  const result = await tool.execute(input, { signal: new AbortController().signal })
+  if (typeof result.content !== "string") {
+    throw new TypeError(`tool ${name} did not return text content`)
+  }
+  return JSON.parse(result.content) as unknown
+}
+
+describe("OpenUltraCode OpenCode 2 plugin entry point", () => {
+  it("has a stable plugin id and registers nothing when disabled", async () => {
+    const ctx = await setupPlugin(await createProjectRoot(), { enabled: false })
+
+    assert.equal(OpenUltraCodePlugin.id, "open-ultracode")
+    assert.equal(ctx.sessionHooks.size, 0)
+    assert.equal(ctx.permissionHooks.length, 0)
+    assert.equal(ctx.toolHooks.size, 0)
+    assert.equal(ctx.toolDefinitions.length, 0)
   })
 
-  it("does not announce for non-OpenUltraCode commands", async () => {
-    const hooks = await OpenUltraCodePlugin({ directory: await createProjectRoot() }, { enabled: true })
-    const output: { parts: unknown[] } = { parts: [] }
+  it("registers OpenCode 2 domain hooks and workflow tools without touching model routing", async () => {
+    const ctx = await setupPlugin(await createProjectRoot(), { enabled: true })
 
-    await getCommandExecuteBeforeHook(hooks)({ command: "commit" }, output)
-
-    assert.deepEqual(output.parts, [])
+    assert.deepEqual([...ctx.sessionHooks.keys()].sort(), ["compaction", "context", "prompt"])
+    assert.equal(ctx.permissionHooks.length, 1)
+    assert.deepEqual([...ctx.toolHooks.keys()], ["execute.after"])
+    assert.deepEqual(
+      ctx.toolDefinitions.map((tool) => tool.name).sort(),
+      [
+        "open_ultracode_completion_report",
+        "open_ultracode_configure_fusion",
+        "open_ultracode_record_blocked_check",
+        "open_ultracode_record_verification",
+        "open_ultracode_status"
+      ]
+    )
   })
 
-  it("does not register workflow tools when disabled", async () => {
-    const hooks = await OpenUltraCodePlugin({ directory: await createProjectRoot() }, { enabled: false })
-
-    assert.equal("tool" in hooks, false)
-  })
-
-  it("returns minimal continuity context from the autocontinue hook", async () => {
+  it("injects workflow continuity into the compaction transcript", async () => {
     const projectRoot = await createProjectRoot()
     const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
     await store.update(createState())
-    const hooks = await OpenUltraCodePlugin({ directory: projectRoot }, { enabled: true })
+    const ctx = await setupPlugin(projectRoot, { enabled: true })
 
-    const context = await getAutocontinueHook(hooks)()
+    const event = { messages: [] } as unknown as SessionCompactionEvent
+    await getSessionHook(ctx, "compaction")(event as never)
 
-    assert.match(context, /OpenUltraCode workflow continuity/i)
-    assert.match(context, /Mode: build/)
-    assert.match(context, /Phase: verification/)
-    assert.match(context, /Assumptions:\n- State contains summaries only\./)
-    assert.doesNotMatch(context, /secret transcript text|unrelatedProjectData/i)
+    const injected = event.messages.at(-1)
+    assert.equal(injected?.role, "user")
+    const text = injected?.content.map((part) => part.text ?? "").join("\n") ?? ""
+    assert.match(text, /OpenUltraCode workflow continuity/i)
+    assert.match(text, /Mode: build/)
+    assert.match(text, /Phase: verification/)
+    assert.match(text, /Goal: Preserve workflow context across compaction\./)
+    assert.match(text, /Constraints:\n- Stay within Plugin Runtime\./)
+    assert.match(text, /Assumptions:\n- State contains summaries only\./)
+    assert.match(text, /Open findings:\n- F-1 \[high\/medium\] Unresolved tool regression/)
+    assert.doesNotMatch(text, /Rejected false positive/)
+    assert.match(text, /Verification:\n- VE-1 \[test:pass\] Plugin test passed\./)
+    assert.match(text, /VE-2 \[audit:not-run\] Audit not run yet\. Reason: Pending implementation\. Residual risk: Security gap unknown\./)
+    assert.match(text, /Degradation notices:\n- D-1 \[warning\] compaction hook: Hook payload is experimental\./)
+    assert.match(text, /Completion: partial - Implementation complete; verification remains partial\./)
   })
 
   it("does not leak model, provider, transcript, or unrelated persisted data into compaction context", async () => {
@@ -133,46 +236,194 @@ describe("OpenUltraCode plugin entry point", () => {
       }),
       "utf8"
     )
-    const hooks = await OpenUltraCodePlugin({ directory: projectRoot }, { enabled: true })
+    const ctx = await setupPlugin(projectRoot, { enabled: true })
 
-    const context = await getCompactionHook(hooks)()
+    const event = { messages: [] } as unknown as SessionCompactionEvent
+    await getSessionHook(ctx, "compaction")(event as never)
 
-    assert.doesNotMatch(context, /claude-opus-4/)
-    assert.doesNotMatch(context, /anthropic/)
-    assert.doesNotMatch(context, /secret transcript text/)
-    assert.doesNotMatch(context, /do not expose/)
-    assert.doesNotMatch(context, /^Model:/m)
-    assert.doesNotMatch(context, /^Provider:/m)
+    const text = event.messages.map((message) => message.content.map((part) => part.text ?? "").join("")).join("\n")
+    assert.doesNotMatch(text, /claude-opus-4/)
+    assert.doesNotMatch(text, /anthropic/)
+    assert.doesNotMatch(text, /secret transcript text/)
+    assert.doesNotMatch(text, /do not expose/)
+    assert.doesNotMatch(text, /^Model:/m)
+    assert.doesNotMatch(text, /^Provider:/m)
   })
 
   it("preserves corrupt-state degradation notices in compaction context", async () => {
     const projectRoot = await createProjectRoot()
     await mkdir(join(projectRoot, stateDirectory), { recursive: true })
     await writeFile(join(projectRoot, stateFile), "not json", "utf8")
-    const hooks = await OpenUltraCodePlugin({ directory: projectRoot }, { enabled: true })
+    const ctx = await setupPlugin(projectRoot, { enabled: true })
 
-    const context = await getCompactionHook(hooks)()
+    const event = { messages: [] } as unknown as SessionCompactionEvent
+    await getSessionHook(ctx, "compaction")(event as never)
 
-    assert.match(context, /OpenUltraCode workflow continuity/i)
-    assert.match(context, /Degradation notices:/)
-    assert.match(context, /workflow state persistence/)
-    assert.match(context, /state file was corrupt/i)
+    const text = event.messages.map((message) => message.content.map((part) => part.text ?? "").join("")).join("\n")
+    assert.match(text, /OpenUltraCode workflow continuity/i)
+    assert.match(text, /Degradation notices:/)
+    assert.match(text, /workflow state persistence/)
+    assert.match(text, /state file was corrupt/i)
+  })
+
+  it("announces the workflow mode when an OpenUltraCode command prompt is admitted", async () => {
+    const ctx = await setupPlugin(await createProjectRoot(), { enabled: true })
+    const event = { prompt: { text: "Use the `open-ultracode` skill.\n\nWorkflow mode: debug\n\nUser task: fix it" } } as unknown as SessionPromptEvent
+
+    await getSessionHook(ctx, "prompt")(event as never)
+
+    assert.match(event.prompt.text, /OpenUltraCode mode active: debug\./)
+    assert.match(event.prompt.text, /active selected opencode model is preserved/)
+  })
+
+  it("does not announce for non-OpenUltraCode prompts", async () => {
+    const ctx = await setupPlugin(await createProjectRoot(), { enabled: true })
+    const event = { prompt: { text: "Workflow mode: ultrathink\n\njust think" } } as unknown as SessionPromptEvent
+
+    await getSessionHook(ctx, "prompt")(event as never)
+
+    assert.equal(event.prompt.text, "Workflow mode: ultrathink\n\njust think")
+  })
+
+  it("applies semantic high-effort request options on model requests", async () => {
+    const ctx = await setupPlugin(await createProjectRoot(), {
+      enabled: true,
+      highEffort: { enabled: true, effort: "xhigh", outputTokens: 128000 }
+    })
+    const event = { options: {}, model: { providerID: "mistral", id: "mistral-large-4" } } as unknown as SessionContextEvent
+
+    await getSessionHook(ctx, "context")(event as never)
+
+    assert.equal(event.options.maxTokens, 128000)
+    assert.equal(event.options.reasoningEffort, "high")
+  })
+
+  it("does not mutate request options when high-effort mode is disabled", async () => {
+    const ctx = await setupPlugin(await createProjectRoot(), {
+      enabled: true,
+      highEffort: { enabled: false, effort: "xhigh", outputTokens: 128000 }
+    })
+    const event = { options: { temperature: 0.2 } } as unknown as SessionContextEvent
+
+    await getSessionHook(ctx, "context")(event as never)
+
+    assert.deepEqual(event.options, { temperature: 0.2 })
+  })
+
+  it("records permission denials from the evaluate hook as blocked workflow status", async () => {
+    const projectRoot = await createProjectRoot()
+    const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
+    await store.update({ ...createState(), phase: "execution" })
+    const ctx = await setupPlugin(projectRoot, { enabled: true })
+
+    await ctx.permissionHooks[0]?.({
+      sessionID: "session-1",
+      action: "edit",
+      resources: ["src/index.ts"],
+      effect: "deny",
+      message: "file edit was denied by opencode permissions"
+    } as never)
+    const status = await executeTool(ctx, "open_ultracode_status", {}) as { phase: string; degradations: string[]; degradationDetails: Array<Record<string, unknown>> }
+
+    assert.equal(status.phase, "blocked")
+    assert.deepEqual(status.degradations, ["D-1", "permission-denied-edit-src-index-ts"])
+    assert.deepEqual(status.degradationDetails.at(-1), {
+      id: "permission-denied-edit-src-index-ts",
+      capability: "permission for edit src/index.ts",
+      severity: "blocked",
+      reason: "file edit was denied by opencode permissions",
+      safeNextAction:
+        "Respect the permission denial; ask the user to approve edit src/index.ts or choose a permitted alternative before retrying.",
+      phase: "execution"
+    })
+  })
+
+  it("records user permission rejections from permission.replied events", async () => {
+    const projectRoot = await createProjectRoot()
+    const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
+    await store.update({ ...createState(), phase: "execution" })
+    const ctx = await setupPlugin(projectRoot, { enabled: true })
+    ctx.permissionRequests.set("per_1", { action: "shell", resources: ["npm test"], message: "shell command was rejected" })
+
+    ctx.emit({ type: "permission.replied", data: { sessionID: "session-1", requestID: "per_1", reply: "reject" } })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    const status = await executeTool(ctx, "open_ultracode_status", {}) as { phase: string; degradations: string[] }
+
+    assert.equal(status.phase, "blocked")
+    assert.deepEqual(status.degradations, ["D-1", "permission-denied-shell-npm-test"])
+  })
+
+  it("records tool failures as blocked workflow status with affected phase", async () => {
+    const projectRoot = await createProjectRoot()
+    const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
+    await store.update({ ...createState(), phase: "verification" })
+    const ctx = await setupPlugin(projectRoot, { enabled: true })
+
+    await getToolHook(ctx, "execute.after")({
+      tool: "bash",
+      sessionID: "session-1",
+      agent: "build",
+      messageID: "msg_1",
+      id: "call_1",
+      input: {},
+      status: "error",
+      error: { message: "npm test failed" }
+    } as unknown as ToolExecuteAfterEvent as never)
+    const status = await executeTool(ctx, "open_ultracode_status", {}) as { phase: string; degradations: string[]; degradationDetails: Array<Record<string, unknown>> }
+
+    assert.equal(status.phase, "blocked")
+    assert.deepEqual(status.degradations, ["D-1", "phase-verification-failed"])
+    assert.deepEqual(status.degradationDetails.at(-1), {
+      id: "phase-verification-failed",
+      capability: "workflow phase verification",
+      severity: "blocked",
+      reason: "bash failed: npm test failed",
+      safeNextAction:
+        "Stop the workflow at verification, fix or explicitly accept the issue, then rerun the phase before reporting completion.",
+      phase: "verification"
+    })
+  })
+
+  it("ignores successful tool executions", async () => {
+    const projectRoot = await createProjectRoot()
+    const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
+    await store.update(createState())
+    const ctx = await setupPlugin(projectRoot, { enabled: true })
+
+    await getToolHook(ctx, "execute.after")({
+      tool: "read",
+      status: "completed",
+      result: { content: "ok" }
+    } as unknown as ToolExecuteAfterEvent as never)
+    const status = await executeTool(ctx, "open_ultracode_status", {}) as { phase: string }
+
+    assert.equal(status.phase, "verification")
   })
 
   it("rejects invalid typed options with actionable configuration errors", async () => {
+    const ctx = createFakeContext("/tmp/open-ultracode", { enabled: "yes" })
+
     await assert.rejects(
-      () => OpenUltraCodePlugin({ directory: "/tmp/open-ultracode" }, { enabled: "yes" }),
+      () => Promise.resolve(OpenUltraCodePlugin.setup(ctx)),
       /enabled must be a boolean when provided/
     )
   })
 
-  it("reports workflow status from project-local state", async () => {
+  it("reports workflow status from project-local state through the status tool", async () => {
     const projectRoot = await createProjectRoot()
     const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
     await store.update(createState())
-    const hooks = await OpenUltraCodePlugin({ directory: projectRoot }, { enabled: true })
+    const ctx = await setupPlugin(projectRoot, { enabled: true })
 
-    const status = await getStatusTool(hooks).execute({})
+    const status = await executeTool(ctx, "open_ultracode_status", {}) as {
+      active: boolean
+      mode: string
+      phase: string
+      completion?: { status: string }
+      degradations: string[]
+      openFindings: string[]
+      verification: string[]
+    }
 
     assert.equal(status.active, true)
     assert.equal(status.mode, "build")
@@ -187,16 +438,16 @@ describe("OpenUltraCode plugin entry point", () => {
     const projectRoot = await createProjectRoot()
     const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
     await store.update(createState())
-    const hooks = await OpenUltraCodePlugin({ directory: projectRoot }, { enabled: true })
+    const ctx = await setupPlugin(projectRoot, { enabled: true })
 
-    const result = await getRecordVerificationTool(hooks).execute({
+    const result = await executeTool(ctx, "open_ultracode_record_verification", {
       id: "VE-3",
       kind: "build",
       result: "pass",
       summary: "Build passed.",
       command: "npm run build",
       criteriaIds: ["AC-1"]
-    })
+    }) as { recorded: boolean; evidenceId?: string }
     const loaded = await store.load()
 
     assert.equal(result.recorded, true)
@@ -209,9 +460,9 @@ describe("OpenUltraCode plugin entry point", () => {
     const projectRoot = await createProjectRoot()
     const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
     await store.update(createState())
-    const hooks = await OpenUltraCodePlugin({ directory: projectRoot }, { enabled: true })
+    const ctx = await setupPlugin(projectRoot, { enabled: true })
 
-    const result = await getRecordBlockedCheckTool(hooks).execute({
+    const result = await executeTool(ctx, "open_ultracode_record_blocked_check", {
       id: "VE-4",
       kind: "audit",
       summary: "Audit could not run.",
@@ -219,7 +470,7 @@ describe("OpenUltraCode plugin entry point", () => {
       criteriaIds: ["AC-1"],
       reason: "Network access was unavailable.",
       residualRisk: "High-severity dependency vulnerabilities may be unknown."
-    })
+    }) as { recorded: boolean; evidenceId?: string }
     const loaded = await store.load()
 
     assert.equal(result.recorded, true)
@@ -253,9 +504,9 @@ describe("OpenUltraCode plugin entry point", () => {
         }
       ]
     }))
-    const hooks = await OpenUltraCodePlugin({ directory: projectRoot }, { enabled: true })
+    const ctx = await setupPlugin(projectRoot, { enabled: true })
 
-    const report = await getCompletionReportTool(hooks).execute({})
+    const report = await executeTool(ctx, "open_ultracode_completion_report", {}) as { status: string }
     const loaded = await store.load()
 
     assert.equal(report.status, "verified")
@@ -266,236 +517,38 @@ describe("OpenUltraCode plugin entry point", () => {
   it("uses the same tool completion path for verified, partial, blocked, failed, and research-only states", async () => {
     const projectRoot = await createProjectRoot()
     const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
-    const hooks = await OpenUltraCodePlugin({ directory: projectRoot }, { enabled: true, verificationGate: "strict" })
+    const ctx = await setupPlugin(projectRoot, { enabled: true, verificationGate: "strict" })
 
     await store.update(createGateState("pass"))
-    assert.equal((await getCompletionReportTool(hooks).execute({})).status, "verified")
+    assert.equal((await executeTool(ctx, "open_ultracode_completion_report", {}) as { status: string }).status, "verified")
 
     await store.update(createGateState("not-run"))
-    assert.equal((await getCompletionReportTool(hooks).execute({})).status, "partial")
+    assert.equal((await executeTool(ctx, "open_ultracode_completion_report", {}) as { status: string }).status, "partial")
 
     await store.update(createGateState("blocked"))
-    assert.equal((await getCompletionReportTool(hooks).execute({})).status, "blocked")
+    assert.equal((await executeTool(ctx, "open_ultracode_completion_report", {}) as { status: string }).status, "blocked")
 
     await store.update(createGateState("fail"))
-    assert.equal((await getCompletionReportTool(hooks).execute({})).status, "failed")
+    assert.equal((await executeTool(ctx, "open_ultracode_completion_report", {}) as { status: string }).status, "failed")
 
-    const researchHooks = await OpenUltraCodePlugin({ directory: projectRoot }, { enabled: true, verificationGate: "disabled" })
+    const researchCtx = await setupPlugin(projectRoot, { enabled: true, verificationGate: "disabled" })
     await store.update({ ...createGateState("pass"), mode: "adversarial-research", criteria: [], verification: [] })
-    assert.equal((await getCompletionReportTool(researchHooks).execute({ researchOnly: true })).status, "research-only")
+    assert.equal((await executeTool(researchCtx, "open_ultracode_completion_report", { researchOnly: true }) as { status: string }).status, "research-only")
   })
 
   it("reports partial completion instead of crashing when completion tool input is omitted", async () => {
     const projectRoot = await createProjectRoot()
     const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
     await store.update(createGateState("not-run"))
-    const hooks = await OpenUltraCodePlugin({ directory: projectRoot }, { enabled: true, verificationGate: "strict" })
+    const ctx = await setupPlugin(projectRoot, { enabled: true, verificationGate: "strict" })
 
-    const report = await getCompletionReportTool(hooks).execute()
+    const report = await executeTool(ctx, "open_ultracode_completion_report", undefined) as { status: string; summary: string; unresolvedRisks: string[] }
 
     assert.equal(report.status, "partial")
     assert.match(report.summary, /not-run checks/i)
     assert(report.unresolvedRisks.some((risk) => risk.includes("VE-gate was not run")))
   })
-
-  it("applies high-effort hints only to supported request fields", async () => {
-    const hooks = await OpenUltraCodePlugin(
-      { directory: await createProjectRoot() },
-      { enabled: true, highEffort: { enabled: true, effort: "high", outputTokens: 128000 } }
-    )
-    const params = {
-      max_tokens: 4096,
-      reasoning_effort: "medium"
-    }
-
-    await getChatParamsHook(hooks)({}, params)
-
-    assert.deepEqual(params, {
-      max_tokens: 128000,
-      reasoning_effort: "high"
-    })
-  })
-
-  it("does not invent unsupported high-effort request fields", async () => {
-    const projectRoot = await createProjectRoot()
-    const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
-    await store.update(createState())
-    const hooks = await OpenUltraCodePlugin(
-      { directory: projectRoot },
-      { enabled: true, highEffort: { enabled: true, effort: "xhigh", outputTokens: 128000 } }
-    )
-    const params = { temperature: 0.2 }
-
-    await getChatParamsHook(hooks)({}, params)
-    const loaded = await store.load()
-
-    assert.deepEqual(params, { temperature: 0.2 })
-    assert.equal(loaded.state?.degradations.at(-1)?.id, "high-effort-limitation")
-    assert.match(loaded.state?.degradations.at(-1)?.reason ?? "", /no supported request fields/i)
-  })
-
-  it("does not mutate request params when high-effort mode is disabled", async () => {
-    const hooks = await OpenUltraCodePlugin(
-      { directory: await createProjectRoot() },
-      { enabled: true, highEffort: { enabled: false, effort: "xhigh", outputTokens: 128000 } }
-    )
-    const params = {
-      max_tokens: 4096,
-      reasoning_effort: "medium"
-    }
-
-    await getChatParamsHook(hooks)({}, params)
-
-    assert.deepEqual(params, {
-      max_tokens: 4096,
-      reasoning_effort: "medium"
-    })
-  })
-
-  it("records permission denials as blocked workflow status with safe next action", async () => {
-    const projectRoot = await createProjectRoot()
-    const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
-    await store.update({ ...createState(), phase: "execution" })
-    const hooks = await OpenUltraCodePlugin({ directory: projectRoot }, { enabled: true })
-
-    await getPermissionAskHook(hooks)(
-      { operation: "edit src/index.ts" },
-      { action: "deny", reason: "file edit was denied by opencode permissions" }
-    )
-    const status = await getStatusTool(hooks).execute({})
-
-    assert.equal(status.phase, "blocked")
-    assert.deepEqual(status.degradations, ["D-1", "permission-denied-edit-src-index-ts"])
-    assert.deepEqual(status.degradationDetails.at(-1), {
-      id: "permission-denied-edit-src-index-ts",
-      capability: "permission for edit src/index.ts",
-      severity: "blocked",
-      reason: "file edit was denied by opencode permissions",
-      safeNextAction:
-        "Respect the permission denial; ask the user to approve edit src/index.ts or choose a permitted alternative before retrying.",
-      phase: "execution"
-    })
-  })
-
-  it("records tool failures as blocked workflow status with affected phase", async () => {
-    const projectRoot = await createProjectRoot()
-    const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
-    await store.update({ ...createState(), phase: "verification" })
-    const hooks = await OpenUltraCodePlugin({ directory: projectRoot }, { enabled: true })
-
-    await getToolExecuteAfterHook(hooks)(
-      { tool: "bash", phase: "verification" },
-      { status: "error", error: "npm test failed" }
-    )
-    const status = await getStatusTool(hooks).execute({})
-
-    assert.equal(status.phase, "blocked")
-    assert.deepEqual(status.degradations, ["D-1", "phase-verification-failed"])
-    assert.deepEqual(status.degradationDetails.at(-1), {
-      id: "phase-verification-failed",
-      capability: "workflow phase verification",
-      severity: "blocked",
-      reason: "bash failed: npm test failed",
-      safeNextAction:
-        "Stop the workflow at verification, fix or explicitly accept the issue, then rerun the phase before reporting completion.",
-      phase: "verification"
-    })
-  })
 })
-
-async function createProjectRoot(): Promise<string> {
-  return mkdtemp(join(tmpdir(), "open-ultracode-plugin-"))
-}
-
-function getCompactionHook(hooks: OpenUltraCodeHooks): () => Promise<string> {
-  const hook = hooks["experimental.session.compacting"]
-  if (typeof hook !== "function") {
-    throw new TypeError("experimental.session.compacting hook is missing")
-  }
-
-  return hook
-}
-
-function getAutocontinueHook(hooks: OpenUltraCodeHooks): () => Promise<string> {
-  const hook = hooks["experimental.compaction.autocontinue"]
-  if (typeof hook !== "function") {
-    throw new TypeError("experimental.compaction.autocontinue hook is missing")
-  }
-
-  return hook
-}
-
-function getStatusTool(hooks: OpenUltraCodeHooks): WorkflowStatusTool {
-  const tool = hooks.tool?.open_ultracode_status
-  if (tool === undefined) {
-    throw new TypeError("open_ultracode_status tool is missing")
-  }
-
-  return tool
-}
-
-function getRecordVerificationTool(hooks: OpenUltraCodeHooks): RecordVerificationTool {
-  const tool = hooks.tool?.open_ultracode_record_verification
-  if (tool === undefined) {
-    throw new TypeError("open_ultracode_record_verification tool is missing")
-  }
-
-  return tool
-}
-
-function getRecordBlockedCheckTool(hooks: OpenUltraCodeHooks): RecordBlockedCheckTool {
-  const tool = hooks.tool?.open_ultracode_record_blocked_check
-  if (tool === undefined) {
-    throw new TypeError("open_ultracode_record_blocked_check tool is missing")
-  }
-
-  return tool
-}
-
-function getCompletionReportTool(hooks: OpenUltraCodeHooks): CompletionReportTool {
-  const tool = hooks.tool?.open_ultracode_completion_report
-  if (tool === undefined) {
-    throw new TypeError("open_ultracode_completion_report tool is missing")
-  }
-
-  return tool
-}
-
-function getChatParamsHook(hooks: OpenUltraCodeHooks): (input: unknown, output: Record<string, unknown>) => Promise<void> {
-  const hook = hooks["chat.params"]
-  if (typeof hook !== "function") {
-    throw new TypeError("chat.params hook is missing")
-  }
-
-  return hook
-}
-
-function getCommandExecuteBeforeHook(hooks: OpenUltraCodeHooks): (input: unknown, output: { parts: unknown[] }) => Promise<void> {
-  const hook = hooks["command.execute.before"]
-  if (typeof hook !== "function") {
-    throw new TypeError("command.execute.before hook is missing")
-  }
-
-  return hook
-}
-
-function getPermissionAskHook(hooks: OpenUltraCodeHooks): (input: unknown, output: Record<string, unknown>) => Promise<void> {
-  const hook = hooks["permission.ask"]
-  if (typeof hook !== "function") {
-    throw new TypeError("permission.ask hook is missing")
-  }
-
-  return hook
-}
-
-function getToolExecuteAfterHook(hooks: OpenUltraCodeHooks): (input: unknown, output: Record<string, unknown>) => Promise<void> {
-  const hook = hooks["tool.execute.after"]
-  if (typeof hook !== "function") {
-    throw new TypeError("tool.execute.after hook is missing")
-  }
-
-  return hook
-}
 
 function createGateState(result: "pass" | "fail" | "not-run" | "blocked"): WorkflowState {
   const state = createState()

@@ -1,7 +1,7 @@
 ---
 description: Participates in OpenUltraCode fusion as configurable panel A.
 mode: subagent
-model: opencode/deepseek-v4-pro
+model: mistral/mistral-large-4
 variant: max
 reasoningEffort: max
 permission:

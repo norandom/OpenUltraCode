@@ -1,7 +1,7 @@
 ---
 description: Arbitrates OpenUltraCode fusion results when explicitly selected as the decider.
 mode: subagent
-model: opencode/kimi-k3
+model: mistral/mistral-large-4
 variant: max
 reasoningEffort: max
 permission:

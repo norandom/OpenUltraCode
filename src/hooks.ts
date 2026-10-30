@@ -2,127 +2,193 @@ import {
   createFailedPhaseNotice,
   createPermissionDeniedNotice
 } from "./degradation.js"
-import { workflowPhases, type DegradationNotice, type Finding, type OpenUltraCodeOptions, type VerificationEvidence, type WorkflowPhase, type WorkflowState } from "./types.js"
+import type { DegradationNotice, Finding, OpenUltraCodeOptions, VerificationEvidence, WorkflowState } from "./types.js"
 import type { WorkflowStateStore } from "./state.js"
-import { applyHighEffortRequestBehavior, type ChatParams } from "./high-effort.js"
-import { createWorkflowStatusTool, type WorkflowStatusTool } from "./status-tool.js"
+import { applyHighEffortRequestBehavior } from "./high-effort.js"
+import { configureFusionModels, fusionModelReferencePattern } from "./fusion-config-tool.js"
+import { createWorkflowStatusTool } from "./status-tool.js"
 import {
   createCompletionReportTool,
   createRecordBlockedCheckTool,
-  createRecordVerificationTool,
-  type CompletionReportTool,
-  type RecordBlockedCheckTool,
-  type RecordVerificationTool
+  createRecordVerificationTool
 } from "./verification-tool.js"
+import type {
+  OpenCodePluginContext,
+  SessionCompactionEvent,
+  SessionPromptEvent,
+  ToolDefinition,
+  ToolExecuteAfterEvent
+} from "./opencode-v2.js"
 
-export interface OpenCodePluginInput {
-  readonly directory: string
-}
-
-export interface OpenUltraCodeHooks {
-  readonly "chat.params"?: (input: unknown, output: ChatParams) => Promise<void>
-  readonly "command.execute.before"?: (input: unknown, output: CommandOutput) => Promise<void>
-  readonly "permission.ask"?: (input: unknown, output: Record<string, unknown>) => Promise<void>
-  readonly "tool.execute.after"?: (input: unknown, output: Record<string, unknown>) => Promise<void>
-  readonly "experimental.session.compacting"?: () => Promise<string>
-  readonly "experimental.compaction.autocontinue"?: () => Promise<string>
-  readonly tool?: OpenUltraCodeTools
-}
-
-export interface CommandOutput {
-  readonly parts?: unknown[]
-}
-
-export interface OpenUltraCodeTools {
-  readonly open_ultracode_status: WorkflowStatusTool
-  readonly open_ultracode_record_verification: RecordVerificationTool
-  readonly open_ultracode_record_blocked_check: RecordBlockedCheckTool
-  readonly open_ultracode_completion_report: CompletionReportTool
-}
-
-export function createOpenUltraCodeHooks(
-  _input: OpenCodePluginInput,
+/**
+ * Registers OpenUltraCode on the OpenCode 2 plugin context. Returns a cleanup
+ * function that aborts the event subscription when the plugin unloads.
+ */
+export function registerOpenUltraCode(
+  ctx: OpenCodePluginContext,
   config: OpenUltraCodeOptions,
   stateStore: WorkflowStateStore
-): OpenUltraCodeHooks {
+): () => void {
   if (!config.enabled) {
-    return {}
+    return () => {}
   }
 
-  return {
-    "chat.params": async (_input, output) => applyHighEffortHints(config, stateStore, output),
-    "command.execute.before": async (input, output) => announceActivation(input, output),
-    "permission.ask": async (input, output) => observePermissionDecision(stateStore, input, output),
-    "tool.execute.after": async (input, output) => observeToolExecution(stateStore, input, output),
-    "experimental.session.compacting": async () => createCompactionContext(await stateStore.load()),
-    "experimental.compaction.autocontinue": async () => createCompactionContext(await stateStore.load()),
-    tool: {
-      open_ultracode_status: createWorkflowStatusTool(config, stateStore),
-      open_ultracode_record_verification: createRecordVerificationTool(stateStore),
-      open_ultracode_record_blocked_check: createRecordBlockedCheckTool(stateStore),
-      open_ultracode_completion_report: createCompletionReportTool(config, stateStore)
+  void ctx.session.hook("context", (event) => {
+    applyHighEffortRequestBehavior(config.highEffort, event.options)
+  })
+
+  void ctx.session.hook("prompt", (event) => {
+    announceActivation(event)
+  })
+
+  void ctx.session.hook("compaction", async (event) => {
+    await injectCompactionContext(stateStore, event)
+  })
+
+  void ctx.permission.hook("evaluate", async (event) => {
+    if (event.effect !== "deny") {
+      return
     }
+
+    const operation = event.resources.length > 0 ? `${event.action} ${event.resources.join(" ")}` : event.action
+    await blockFromPermission(
+      stateStore,
+      operation,
+      event.resources,
+      event.message ?? "permission was denied by opencode rules"
+    )
+  })
+
+  void ctx.tool.hook("execute.after", async (event) => {
+    await observeToolExecution(stateStore, event)
+  })
+
+  void ctx.tool.transform((editor) => {
+    editor.add(toToolDefinition("open_ultracode_status", createWorkflowStatusTool(config, stateStore), {
+      type: "object",
+      properties: {},
+      additionalProperties: false
+    }))
+    editor.add(toToolDefinition("open_ultracode_record_verification", createRecordVerificationTool(stateStore), verificationInputSchema()))
+    editor.add(toToolDefinition("open_ultracode_record_blocked_check", createRecordBlockedCheckTool(stateStore), verificationInputSchema()))
+    editor.add(toToolDefinition("open_ultracode_completion_report", createCompletionReportTool(config, stateStore), {
+      type: "object",
+      properties: {
+        researchOnly: { type: "boolean", description: "Report research-only status instead of running the completion gate." }
+      },
+      additionalProperties: false
+    }))
+    editor.add({
+      name: "open_ultracode_configure_fusion",
+      description:
+        "Read or update the persistent OpenUltraCode fusion panel A, panel B, and decider model IDs. Every updated fusion role is configured for maximum reasoning.",
+      input: {
+        type: "object",
+        properties: {
+          panelA: { type: "string", pattern: fusionModelReferencePattern.source, description: "Optional provider/model or provider/model#max reference for fusion panel A." },
+          panelB: { type: "string", pattern: fusionModelReferencePattern.source, description: "Optional provider/model or provider/model#max reference for fusion panel B." },
+          decider: { type: "string", pattern: fusionModelReferencePattern.source, description: "Optional provider/model or provider/model#max reference for the fusion decider." }
+        },
+        additionalProperties: false
+      },
+      execute: async (input: unknown) => ({
+        content: JSON.stringify(await configureFusionModels(ctx.location.directory, isRecord(input) ? input : {}), null, 2)
+      })
+    })
+  })
+
+  const controller = new AbortController()
+  void observePermissionReplies(ctx, stateStore, controller.signal)
+
+  return () => controller.abort()
+}
+
+async function observePermissionReplies(
+  ctx: OpenCodePluginContext,
+  stateStore: WorkflowStateStore,
+  signal: AbortSignal
+): Promise<void> {
+  for await (const event of ctx.event.subscribe({ types: ["permission.replied"], signal })) {
+    if (event.type !== "permission.replied" || event.data.reply !== "reject") {
+      continue
+    }
+
+    const sessionID = typeof event.data.sessionID === "string" ? event.data.sessionID : "unknown session"
+    const requestID = typeof event.data.requestID === "string" ? event.data.requestID : "unknown request"
+    let operation = `permission request ${requestID}`
+    let reason = "permission was rejected by the user"
+
+    try {
+      const request = await ctx.permission.get({ sessionID, requestID })
+      const action = request.data.action
+      const resources = request.data.resources.join(" ")
+      operation = resources.length > 0 ? `${action} ${resources}` : action
+      if (typeof request.data.message === "string" && request.data.message.length > 0) {
+        reason = request.data.message
+      }
+    } catch {
+      // The pending request may already be gone; record the generic denial.
+    }
+
+    await blockFromPermission(stateStore, operation, [], reason)
   }
 }
 
-function announceActivation(input: unknown, output: CommandOutput): void {
-  if (!Array.isArray(output.parts)) {
+function announceActivation(event: SessionPromptEvent): void {
+  const match = /Workflow mode:\s*([a-z-]+)/i.exec(event.prompt.text)
+  if (match === null) {
     return
   }
 
-  const command = readString(input, "command")
-  const mode = command === undefined ? undefined : openUltraCodeCommandModes[command]
+  const rawMode = match[1]
+  if (rawMode === undefined) {
+    return
+  }
+
+  const mode = openUltraCodeCommandModes[rawMode.toLowerCase()]
   if (mode === undefined) {
     return
   }
 
-  // Put the mode marker into the command prompt itself so users see it in opencode without needing a provider or TUI hook.
-  output.parts.push({
-    type: "text",
-    text: `OpenUltraCode mode active: ${mode}. The active selected opencode model is preserved; workflow status, degradation notices, and verification gates are available.`
-  })
+  // Append the mode marker to the admitted prompt so users and the model see it
+  // without needing a provider or TUI hook.
+  event.prompt.text = `${event.prompt.text}\n\nOpenUltraCode mode active: ${mode}. The active selected opencode model is preserved; workflow status, degradation notices, and verification gates are available.`
 }
 
 const openUltraCodeCommandModes: Readonly<Record<string, string>> = {
-  ultracode: "comprehensive",
-  "ultracode-debug": "debug",
-  "ultracode-fusion": "fusion",
-  "ultracode-fusion-models": "fusion-configuration",
-  "ultracode-spec-audit": "spec-audit",
-  "ultracode-research": "adversarial-research",
-  "ultracode-verify": "verify",
+  comprehensive: "comprehensive",
+  debug: "debug",
+  "spec-audit": "spec-audit",
+  "adversarial-research": "adversarial-research",
+  verify: "verify",
   "ultrathink-fusion": "ultrathink-fusion"
 }
 
-async function observePermissionDecision(
+async function blockFromPermission(
   stateStore: WorkflowStateStore,
-  input: unknown,
-  output: Record<string, unknown>
+  operation: string,
+  _resources: readonly string[],
+  reason: string
 ): Promise<void> {
-  if (!isDeniedPermission(output)) {
-    return
-  }
-
   const loaded = await stateStore.load()
   if (loaded.state === undefined) {
     return
   }
 
-  const operation = readString(input, "operation") ?? readString(output, "operation") ?? "unknown operation"
-  const reason = readString(output, "reason") ?? readString(input, "reason") ?? "permission was denied"
-  const phase = readWorkflowPhase(input, "phase") ?? loaded.state.phase
-  const notice = createPermissionDeniedNotice({ operation, reason, phase })
+  const notice = createPermissionDeniedNotice({
+    operation,
+    reason,
+    phase: loaded.state.phase
+  })
 
   await blockWorkflow(stateStore, loaded.state, notice)
 }
 
 async function observeToolExecution(
   stateStore: WorkflowStateStore,
-  input: unknown,
-  output: Record<string, unknown>
+  event: ToolExecuteAfterEvent
 ): Promise<void> {
-  const failureReason = readToolFailureReason(output)
-  if (failureReason === undefined) {
+  if (event.status !== "error") {
     return
   }
 
@@ -131,11 +197,9 @@ async function observeToolExecution(
     return
   }
 
-  const tool = readString(input, "tool") ?? readString(input, "toolName") ?? readString(output, "tool") ?? "tool"
-  const phase = readWorkflowPhase(input, "phase") ?? readWorkflowPhase(output, "phase") ?? loaded.state.phase
   const notice = createFailedPhaseNotice({
-    phase,
-    reason: `${tool} failed: ${failureReason}`
+    phase: loaded.state.phase,
+    reason: `${event.tool} failed: ${event.error.message}`
   })
 
   await blockWorkflow(stateStore, loaded.state, notice)
@@ -154,26 +218,23 @@ async function blockWorkflow(
   })
 }
 
-async function applyHighEffortHints(
-  config: OpenUltraCodeOptions,
+async function injectCompactionContext(
   stateStore: WorkflowStateStore,
-  output: ChatParams
+  event: SessionCompactionEvent
 ): Promise<void> {
-  const result = applyHighEffortRequestBehavior(config.highEffort, output)
-  if (result.degradation === undefined || !config.notices.showDegradation) {
+  const context = createCompactionContext(await stateStore.load())
+  if (context.trim().length === 0) {
     return
   }
 
-  const loaded = await stateStore.load()
-  if (loaded.state === undefined) {
-    return
-  }
-
-  await stateStore.update({
-    ...loaded.state,
-    updatedAt: result.degradation.occurredAt,
-    degradations: replaceDegradation(loaded.state.degradations, result.degradation)
+  event.messages.push({
+    role: "user",
+    content: [{ type: "text", text: context.trimEnd() }]
   })
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 function replaceDegradation(
@@ -181,48 +242,6 @@ function replaceDegradation(
   degradation: DegradationNotice
 ): readonly DegradationNotice[] {
   return [...degradations.filter((existing) => existing.id !== degradation.id), degradation]
-}
-
-function isDeniedPermission(output: Record<string, unknown>): boolean {
-  const decision = readString(output, "action") ?? readString(output, "status") ?? readString(output, "decision")
-
-  return decision === "deny" || decision === "denied" || decision === "reject" || decision === "rejected"
-}
-
-function readToolFailureReason(output: Record<string, unknown>): string | undefined {
-  const error = output.error
-  if (error instanceof Error) {
-    return error.message
-  }
-  if (typeof error === "string" && error.length > 0) {
-    return error
-  }
-
-  const status = readString(output, "status") ?? readString(output, "result")
-  if (status !== "error" && status !== "failed" && status !== "fail") {
-    return undefined
-  }
-
-  return readString(output, "reason") ?? readString(output, "message") ?? "tool execution failed"
-}
-
-function readString(value: unknown, field: string): string | undefined {
-  if (!isRecord(value)) {
-    return undefined
-  }
-
-  const result = value[field]
-  return typeof result === "string" && result.length > 0 ? result : undefined
-}
-
-function readWorkflowPhase(value: unknown, field: string): WorkflowPhase | undefined {
-  const phase = readString(value, field)
-
-  return phase !== undefined && workflowPhases.includes(phase as WorkflowPhase) ? (phase as WorkflowPhase) : undefined
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 interface WorkflowStateLoadSnapshot {
@@ -306,4 +325,43 @@ function formatDegradationNotice(notice: DegradationNotice): string {
 
 function sentence(value: string): string {
   return /[.!?]$/.test(value) ? value : `${value}.`
+}
+
+interface WorkflowTool {
+  readonly description: string
+  readonly execute: (input: unknown) => Promise<unknown>
+}
+
+function toToolDefinition(
+  name: string,
+  tool: WorkflowTool,
+  input: Record<string, unknown>
+): ToolDefinition {
+  return {
+    name,
+    description: tool.description,
+    input,
+    execute: async (rawInput: unknown) => ({
+      content: JSON.stringify(await tool.execute(rawInput), null, 2)
+    })
+  }
+}
+
+function verificationInputSchema(): Record<string, unknown> {
+  return {
+    type: "object",
+    properties: {
+      id: { type: "string" },
+      kind: { type: "string", enum: ["test", "build", "lint", "typecheck", "audit", "manual", "artifact"] },
+      result: { type: "string", enum: ["pass", "fail", "not-run", "blocked"] },
+      summary: { type: "string" },
+      criteriaIds: { type: "array", items: { type: "string" } },
+      command: { type: "string" },
+      artifact: { type: "string" },
+      reason: { type: "string" },
+      residualRisk: { type: "string" }
+    },
+    required: ["id", "kind", "summary", "criteriaIds"],
+    additionalProperties: false
+  }
 }

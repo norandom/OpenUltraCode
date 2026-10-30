@@ -4,75 +4,65 @@ import { describe, it } from "node:test"
 import { applyHighEffortRequestBehavior } from "../src/index.js"
 
 describe("high-effort request behavior", () => {
-  it("applies supported token and nested reasoning controls without inventing fields", () => {
-    const params = {
-      maxTokens: 2048,
-      reasoning: {
-        effort: "medium"
-      },
+  it("applies semantic output-token and reasoning-effort options", () => {
+    const options: Record<string, unknown> = {
       temperature: 0.2
     }
 
     const result = applyHighEffortRequestBehavior(
       { enabled: true, effort: "xhigh", outputTokens: 64000 },
-      params
+      options
     )
 
-    assert.deepEqual(result, { appliedFields: ["maxTokens", "reasoning.effort"] })
-    assert.deepEqual(params, {
+    assert.deepEqual(result, { appliedFields: ["maxTokens", "reasoningEffort"] })
+    assert.deepEqual(options, {
       maxTokens: 64000,
-      reasoning: {
-        effort: "high"
-      },
+      reasoningEffort: "high",
       temperature: 0.2
     })
-    assert.equal("reasoning_effort" in params, false)
-    assert.equal("max_tokens" in params, false)
+    assert.equal("reasoning_effort" in options, false)
+    assert.equal("max_tokens" in options, false)
   })
 
-  it("reports unsupported controls without hidden reasoning or provider-limit claims", () => {
-    const params = { temperature: 0.2 }
+  it("maps medium effort to the medium provider effort level", () => {
+    const options: Record<string, unknown> = {}
 
     const result = applyHighEffortRequestBehavior(
-      { enabled: true, effort: "xhigh", outputTokens: 64000 },
-      params
+      { enabled: true, effort: "medium", outputTokens: 64000 },
+      options
     )
 
-    assert.deepEqual(params, { temperature: 0.2 })
-    assert.deepEqual(result.appliedFields, [])
-    assert.equal(result.degradation?.id, "high-effort-limitation")
-    assert.doesNotMatch(result.degradation?.userVisibleMessage ?? "", /hidden reasoning|chain-of-thought|bypass/i)
-    assert.doesNotMatch(result.degradation?.safeNextAction ?? "", /hidden reasoning|chain-of-thought|bypass/i)
+    assert.deepEqual(result.appliedFields, ["maxTokens", "reasoningEffort"])
+    assert.equal(options.reasoningEffort, "medium")
   })
 
-  it("never downgrades fusion max reasoning metadata", () => {
-    const params = {
-      reasoning_effort: "max",
+  it("leaves request options untouched when high-effort mode is disabled", () => {
+    const options: Record<string, unknown> = { temperature: 0.2 }
+
+    const result = applyHighEffortRequestBehavior(
+      { enabled: false, effort: "xhigh", outputTokens: 64000 },
+      options
+    )
+
+    assert.deepEqual(options, { temperature: 0.2 })
+    assert.deepEqual(result.appliedFields, [])
+  })
+
+  it("never downgrades an already-stronger effort or token budget set by an earlier hook", () => {
+    const options: Record<string, unknown> = {
       reasoningEffort: "max",
-      reasoning: { effort: "max" },
-      options: {
-        reasoningEffort: "max"
-      }
+      maxTokens: 128000
     }
 
     const result = applyHighEffortRequestBehavior(
       { enabled: true, effort: "xhigh", outputTokens: 64000 },
-      params
+      options
     )
 
-    assert.deepEqual(result.appliedFields, [
-      "reasoning_effort",
-      "reasoningEffort",
-      "reasoning.effort",
-      "options.reasoningEffort"
-    ])
-    assert.deepEqual(params, {
-      reasoning_effort: "max",
+    assert.deepEqual(result.appliedFields, ["maxTokens", "reasoningEffort"])
+    assert.deepEqual(options, {
       reasoningEffort: "max",
-      reasoning: { effort: "max" },
-      options: {
-        reasoningEffort: "max"
-      }
+      maxTokens: 128000
     })
   })
 })

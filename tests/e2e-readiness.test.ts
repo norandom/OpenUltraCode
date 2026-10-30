@@ -27,10 +27,11 @@ describe("OpenUltraCode end-to-end readiness", () => {
   it("keeps opencode selected-model routing authoritative", () => {
     const config = JSON.parse(readFileSync(join(process.cwd(), "opencode.json"), "utf8")) as Record<string, unknown>
 
-    assert.deepEqual(config.plugin, ["./.opencode/plugins/open-ultracode.ts"])
-    assert.deepEqual(config.skills, { paths: [".opencode/skills"] })
+    assert.deepEqual(config.plugins, [{ package: "./.opencode/plugins/open-ultracode" }])
+    assert.deepEqual(config.skills, [".opencode/skills"])
     assert.equal("model" in config, false)
     assert.equal("provider" in config, false)
+    assert.equal("plugin" in config, false)
   })
 
   it("routes every workflow command through selected-model prompts and fallback behavior", () => {
@@ -66,18 +67,17 @@ describe("OpenUltraCode end-to-end readiness", () => {
     assert(verification.unresolvedRisks.some((risk) => risk.includes("VE-ready was not run")))
   })
 
-  it("degrades high-effort readiness without inventing provider controls", () => {
-    const params = { temperature: 0.2 }
+  it("applies high-effort readiness through semantic request options without inventing raw provider fields", () => {
+    const params: Record<string, unknown> = { temperature: 0.2 }
     const result = applyHighEffortRequestBehavior(
       { enabled: true, effort: "xhigh", outputTokens: 128000 },
       params
     )
 
-    assert.deepEqual(params, { temperature: 0.2 })
-    assert.deepEqual(result.appliedFields, [])
-    assert.equal(result.degradation?.id, "high-effort-limitation")
-    assert.doesNotMatch(result.degradation?.userVisibleMessage ?? "", /hidden reasoning|chain-of-thought|bypass/i)
-    assert.doesNotMatch(result.degradation?.safeNextAction ?? "", /hidden reasoning|chain-of-thought|bypass/i)
+    assert.deepEqual(params, { temperature: 0.2, maxTokens: 128000, reasoningEffort: "high" })
+    assert.deepEqual(result.appliedFields, ["maxTokens", "reasoningEffort"])
+    assert.equal("max_tokens" in params, false)
+    assert.equal("reasoning_effort" in params, false)
   })
 })
 

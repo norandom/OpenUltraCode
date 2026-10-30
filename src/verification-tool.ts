@@ -32,7 +32,7 @@ export interface RecordBlockedCheckTool {
 
 export interface CompletionReportTool {
   readonly description: string
-  readonly execute: (input?: CompletionReportToolInput) => Promise<CompletionReport>
+  readonly execute: (input: unknown) => Promise<CompletionReport>
 }
 
 export function createRecordVerificationTool(stateStore: WorkflowStateStore): RecordVerificationTool {
@@ -61,14 +61,15 @@ export function createCompletionReportTool(
 ): CompletionReportTool {
   return {
     description: "Produce and persist an OpenUltraCode completion report using the runtime verification gate.",
-    async execute(input?: CompletionReportToolInput): Promise<CompletionReport> {
+    async execute(input: unknown): Promise<CompletionReport> {
+      const researchOnly = isRecord(input) && input.researchOnly === true
       const loaded = await stateStore.load()
       if (loaded.state === undefined) {
         return evaluateCompletionGate({
           policy: config.verificationGate,
           criteria: [],
           evidence: [],
-          researchOnly: input?.researchOnly === true
+          researchOnly
         })
       }
 
@@ -78,7 +79,7 @@ export function createCompletionReportTool(
         evidence: loaded.state.verification,
         assumptions: loaded.state.assumptions,
         findingIds: loaded.state.findings.map((finding) => finding.id),
-        researchOnly: input?.researchOnly === true || loaded.state.mode === "adversarial-research" || loaded.state.mode === "spec-audit"
+        researchOnly: researchOnly || loaded.state.mode === "adversarial-research" || loaded.state.mode === "spec-audit"
       })
       await stateStore.update(withUpdatedState(loaded.state, { completion: report }))
 
@@ -158,11 +159,15 @@ function readBlockedEvidence(input: unknown): VerificationEvidence {
 }
 
 function requireRecord(value: unknown): Record<string, unknown> {
-  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
-    return value as Record<string, unknown>
+  if (isRecord(value)) {
+    return value
   }
 
   throw new TypeError("tool input must be an object")
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
 function readString(value: unknown, name: string): string {

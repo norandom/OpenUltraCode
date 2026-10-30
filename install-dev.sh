@@ -91,7 +91,7 @@ install_global_assets() {
 
 register_global_plugin() {
   config_file="$OPENCODE_CONFIG_DIR/opencode.json"
-  plugin_path="$(pwd -P)/.opencode/plugins/open-ultracode.ts"
+  plugin_path="$(pwd -P)/.opencode/plugins/open-ultracode"
   mkdir -p "$OPENCODE_CONFIG_DIR"
 
   if [ ! -f "$config_file" ]; then
@@ -119,21 +119,23 @@ if (typeof config !== "object" || config === null || Array.isArray(config)) {
 }
 
 config.$schema ??= "https://opencode.ai/config.json"
-if (config.permission === undefined) {
-  config.permission = { open_ultracode_configure_fusion: "ask" }
-} else if (
-  typeof config.permission === "object" &&
-  config.permission !== null &&
-  !Array.isArray(config.permission) &&
-  !("open_ultracode_configure_fusion" in config.permission)
-) {
-  config.permission.open_ultracode_configure_fusion = "ask"
+// OpenCode 2: permissions use one ordered array, and local plugins load from
+// directories through the plugins array in object form. Drop V1 shapes.
+delete config.permission
+const permissions = Array.isArray(config.permissions) ? config.permissions : []
+const fusionRule = { action: "open_ultracode_configure_fusion", resource: "*", effect: "ask" }
+if (!permissions.some((entry) => entry && entry.action === fusionRule.action)) {
+  permissions.push(fusionRule)
 }
-const existing = Array.isArray(config.plugin) ? config.plugin : []
-config.plugin = existing.filter((entry) => entry !== "./.opencode/plugins/open-ultracode.ts")
-if (!config.plugin.includes(pluginPath)) {
-  config.plugin.push(pluginPath)
-}
+config.permissions = permissions
+
+delete config.plugin
+const existing = Array.isArray(config.plugins) ? config.plugins : []
+config.plugins = existing.filter(
+  (entry) => !(typeof entry === "string" && entry.includes("/.opencode/plugins/open-ultracode")) &&
+    !(typeof entry === "object" && entry !== null && entry.package === pluginPath)
+)
+config.plugins.push({ package: pluginPath })
 
 fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`)
 NODE

@@ -1,6 +1,6 @@
 {
   "name": "opencode-ultracode-workflow-plugin",
-  "version": "0.1.4-rc.1",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "files": [

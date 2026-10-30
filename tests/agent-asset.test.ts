@@ -48,9 +48,9 @@ const agentExpectations: readonly AgentExpectation[] = [
 ] as const
 
 const fusionAgentFiles = [
-  ["ultracode-fusion-panel-a.md", "opencode/deepseek-v4-pro"],
-  ["ultracode-fusion-panel-b.md", "opencode/glm-5.2"],
-  ["ultracode-fusion-arbiter.md", "opencode/kimi-k3"]
+  ["ultracode-fusion-panel-a.md", "mistral/mistral-large-4"],
+  ["ultracode-fusion-panel-b.md", "mistral/mistral-large-4"],
+  ["ultracode-fusion-arbiter.md", "mistral/mistral-large-4"]
 ] as const
 
 function readAgent(file: string): string {

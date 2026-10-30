@@ -24,7 +24,7 @@ export interface WorkflowStatusDegradation {
 
 export interface WorkflowStatusTool {
   readonly description: string
-  readonly execute: (input: Record<string, never>) => Promise<WorkflowStatusToolResult>
+  readonly execute: (input: unknown) => Promise<WorkflowStatusToolResult>
 }
 
 export function createWorkflowStatusTool(

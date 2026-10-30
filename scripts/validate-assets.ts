@@ -22,7 +22,8 @@ const requiredScaffoldPaths = [
   ".github/workflows/release.yml",
   "src",
   ".opencode/plugins",
-  ".opencode/plugins/open-ultracode.ts",
+  ".opencode/plugins/open-ultracode",
+  ".opencode/plugins/open-ultracode/index.ts",
   ".opencode/tools",
   ".opencode/tools/open_ultracode_configure_fusion.ts",
   ".opencode/lib",
@@ -92,14 +93,25 @@ function validateOpenCodeConfig(root: string, errors: string[]): void {
   if (config.$schema !== "https://opencode.ai/config.json") {
     errors.push(`${relativePath} must declare https://opencode.ai/config.json schema`)
   }
-  if (!arrayEquals(config.plugin, ["./.opencode/plugins/open-ultracode.ts"])) {
-    errors.push(`${relativePath} must register ./.opencode/plugins/open-ultracode.ts`)
+  const plugins = Array.isArray(config.plugins) ? config.plugins : []
+  const registersPlugin = plugins.some(
+    (entry) => isRecord(entry) && entry.package === "./.opencode/plugins/open-ultracode"
+  )
+  if (!registersPlugin) {
+    errors.push(`${relativePath} must register ./.opencode/plugins/open-ultracode as a plugins package entry`)
   }
-  if (!isRecord(config.skills) || !arrayEquals(config.skills.paths, [".opencode/skills"])) {
-    errors.push(`${relativePath} must register .opencode/skills in skills.paths`)
+  if (config.plugin !== undefined) {
+    errors.push(`${relativePath} must use the OpenCode 2 plugins array, not the V1 plugin key`)
   }
-  if (!isRecord(config.permission) || config.permission.open_ultracode_configure_fusion !== "ask") {
-    errors.push(`${relativePath} must ask before open_ultracode_configure_fusion mutations`)
+  if (!arrayEquals(config.skills, [".opencode/skills"])) {
+    errors.push(`${relativePath} must register .opencode/skills in the skills array`)
+  }
+  const permissions = Array.isArray(config.permissions) ? config.permissions : []
+  const asksBeforeFusionMutation = permissions.some(
+    (entry) => isRecord(entry) && entry.action === "open_ultracode_configure_fusion" && entry.effect === "ask"
+  )
+  if (!asksBeforeFusionMutation) {
+    errors.push(`${relativePath} must ask before open_ultracode_configure_fusion mutations via the permissions array`)
   }
   if ("model" in config || "provider" in config) {
     errors.push(`${relativePath} must not configure model or provider routing`)
@@ -107,7 +119,7 @@ function validateOpenCodeConfig(root: string, errors: string[]): void {
 }
 
 function validatePlugin(root: string, errors: string[]): void {
-  const relativePath = ".opencode/plugins/open-ultracode.ts"
+  const relativePath = ".opencode/plugins/open-ultracode/index.ts"
   const content = readAsset(root, relativePath, errors)
   if (content === undefined) return
   if (!/export\s+\{[^}]*default[^}]*\}|export\s+default/.test(content)) {

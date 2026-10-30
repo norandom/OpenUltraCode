@@ -11,7 +11,8 @@ const projectRoot = process.cwd()
 const requiredScaffoldPaths = [
   "src",
   ".opencode/plugins",
-  ".opencode/plugins/open-ultracode.ts",
+  ".opencode/plugins/open-ultracode",
+  ".opencode/plugins/open-ultracode/index.ts",
   ".opencode/tools",
   ".opencode/tools/open_ultracode_configure_fusion.ts",
   ".opencode/lib",
@@ -51,22 +52,25 @@ describe("OpenUltraCode scaffold", () => {
     const releaseWorkflow = readFileSync(join(projectRoot, ".github/workflows/release.yml"), "utf8")
 
     assert.equal(config.$schema, "https://opencode.ai/config.json")
-    assert.deepEqual(config.plugin, ["./.opencode/plugins/open-ultracode.ts"])
-    assert.deepEqual(config.skills, { paths: [".opencode/skills"] })
-    assert.deepEqual(config.permission, { open_ultracode_configure_fusion: "ask" })
+    assert.deepEqual(config.plugins, [{ package: "./.opencode/plugins/open-ultracode" }])
+    assert.deepEqual(config.skills, [".opencode/skills"])
+    assert.equal("plugin" in config, false)
+    assert.deepEqual(config.permissions, [{ action: "open_ultracode_configure_fusion", resource: "*", effect: "ask" }])
     assert.equal("model" in config, false)
     assert.equal("provider" in config, false)
     assert.equal(manifest.packageManager, "pnpm@11.4.0")
-    assert.equal(manifest.version, "0.1.4-rc.1")
+    assert.equal(manifest.version, "0.2.0")
     assert.equal(scripts.eslint, "eslint .")
     assert.equal(scripts.lint, "dagger call lint --source .")
     assert.equal(scripts.check, "pnpm run build && pnpm run lint && pnpm run test && pnpm run validate:assets")
     assert.match(pnpmWorkspace, /^allowBuilds:\r?\n {2}esbuild: true$/m)
     assert.match(pnpmWorkspace, /^minimumReleaseAge: 4320$/m)
     assert.match(installer, /OPENCODE_CONFIG_DIR="\$\{OPENCODE_CONFIG_DIR:-\$HOME\/\.config\/opencode\}"/)
-    assert.match(installer, /DEFAULT_FUSION_PANEL_A_MODEL="opencode\/deepseek-v4-pro#max"/)
-    assert.match(installer, /DEFAULT_FUSION_PANEL_B_MODEL="opencode\/glm-5\.2#max"/)
-    assert.match(installer, /DEFAULT_FUSION_ARBITER_MODEL="opencode\/kimi-k3#max"/)
+    assert.match(installer, /DEFAULT_FUSION_PANEL_A_MODEL="mistral\/mistral-large-4#max"/)
+    assert.match(installer, /DEFAULT_FUSION_PANEL_B_MODEL="mistral\/mistral-large-4#max"/)
+    assert.match(installer, /DEFAULT_FUSION_ARBITER_MODEL="mistral\/mistral-large-4#max"/)
+    assert.match(installer, /MISTRAL_GLM_5_3_FUSION_MODEL="mistral\/zai-glm-5-3#max"/)
+    assert.match(installer, /config\.plugins\.push\(\{ package: pluginPath \}\)/)
     assert.match(installer, /legacyFusionPlaceholders/)
     assert.match(devInstaller, /legacyFusionPlaceholders/)
     assert.match(installer, /read_current_model\(\)/)
@@ -189,6 +193,7 @@ function createAssetFixture(): string {
   for (const relativePath of [
     "src",
     ".opencode/plugins",
+    ".opencode/plugins/open-ultracode",
     ".opencode/tools",
     ".opencode/lib",
     ".opencode/skills/open-ultracode",
@@ -216,9 +221,9 @@ function createAssetFixture(): string {
     join(root, "opencode.json"),
     JSON.stringify({
       $schema: "https://opencode.ai/config.json",
-      plugin: ["./.opencode/plugins/open-ultracode.ts"],
-      skills: { paths: [".opencode/skills"] },
-      permission: { open_ultracode_configure_fusion: "ask" }
+      plugins: [{ package: "./.opencode/plugins/open-ultracode" }],
+      skills: [".opencode/skills"],
+      permissions: [{ action: "open_ultracode_configure_fusion", resource: "*", effect: "ask" }]
     })
   )
   writeFileSync(join(root, "tsconfig.json"), "{}\n")
@@ -229,7 +234,7 @@ function createAssetFixture(): string {
   writeFileSync(join(root, "pnpm-workspace.yaml"), "allowBuilds:\n  esbuild: true\nminimumReleaseAge: 4320\n")
   writeFileSync(join(root, "scripts/validate-assets.ts"), "")
 
-  writeFileSync(join(root, ".opencode/plugins/open-ultracode.ts"), "export default async () => ({})\n")
+  writeFileSync(join(root, ".opencode/plugins/open-ultracode/index.ts"), "export { default } from \"../../../src/plugin.js\"\n")
   writeFileSync(join(root, ".opencode/tools/open_ultracode_configure_fusion.ts"), fusionConfigToolAsset())
   writeFileSync(join(root, ".opencode/lib/fusion-config.ts"), "export async function configureFusionModels() {}\n")
   writeFileSync(join(root, ".opencode/skills/open-ultracode/SKILL.md"), skillAsset())

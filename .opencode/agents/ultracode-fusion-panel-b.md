@@ -1,7 +1,7 @@
 ---
 description: Participates in OpenUltraCode fusion as configurable panel B.
 mode: subagent
-model: opencode/glm-5.2
+model: mistral/mistral-large-4
 variant: max
 reasoningEffort: max
 permission:

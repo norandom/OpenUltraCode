@@ -6,18 +6,21 @@ After changing plugin files, commands, skills, agents, or opencode configuration
 
 ## Plugin
 
-The plugin entry point lives at `.opencode/plugins/open-ultracode.ts`. It validates options, creates project-local workflow state, registers workflow tools, and observes safe hook points.
+The plugin entry point lives at `.opencode/plugins/open-ultracode/index.ts`. OpenCode 2 loads local plugins from directories and expects a default export with an `id` and a `setup(ctx)` function. The plugin validates options, creates project-local workflow state, registers workflow tools, and observes safe hook points through the OpenCode 2 plugin context (`session`, `permission`, `tool`, and `event` domains).
 
 Example local plugin entry in opencode configuration:
 
 ```json
 {
-  "plugin": [
-    ["./.opencode/plugins/open-ultracode.ts", {
-      "enabled": true,
-      "verificationGate": "strict",
-      "adversarialReview": "required"
-    }]
+  "plugins": [
+    {
+      "package": "./.opencode/plugins/open-ultracode",
+      "options": {
+        "enabled": true,
+        "verificationGate": "strict",
+        "adversarialReview": "required"
+      }
+    }
   ]
 }
 ```
@@ -27,9 +30,9 @@ Example local plugin entry in opencode configuration:
 - `enabled`: turns OpenUltraCode plugin behavior on or off. Disabled mode returns no operational hooks.
 - `verificationGate`: `strict`, `advisory`, or `disabled`.
 - `adversarialReview`: `required`, `recommended`, or `disabled`.
-- `highEffort.enabled`: enables best-effort request hints when compatible fields are already present.
-- `highEffort.effort`: `medium`, `high`, or `xhigh`.
-- `highEffort.outputTokens`: desired output-token floor for compatible request fields.
+- `highEffort.enabled`: enables best-effort request hints on the OpenCode 2 `context` hook.
+- `highEffort.effort`: `medium`, `high`, or `xhigh`; mapped to the semantic `reasoningEffort` request option.
+- `highEffort.outputTokens`: desired output-token budget, applied as the semantic `maxTokens` request option.
 - `state.directory`: project-relative workflow state directory.
 - `notices.showDegradation`: controls whether visible degradation notices are recorded when supported.
 
@@ -64,7 +67,7 @@ Role agents use conservative permissions:
 ## Troubleshooting
 
 - Commands or agents missing: restart opencode and confirm `.opencode/commands`, `.opencode/agents`, and `.opencode/skills/open-ultracode/SKILL.md` exist.
-- Plugin not active: confirm the `plugin` entry points at `.opencode/plugins/open-ultracode.ts` and `enabled` is not false.
+- Plugin not active: confirm the `plugins` array contains `{ "package": ".../.opencode/plugins/open-ultracode" }` (a directory, not a single `.ts` file) and `enabled` is not false.
 - High-effort unavailable: check workflow status for a degradation notice and continue with visible review and verification.
 - Completion remains partial: record verification evidence, then run the completion report tool or `/ultracode-verify`.
 - Permission blocked: adjust opencode permissions intentionally or choose a permitted path; OpenUltraCode will not retry denied operations.

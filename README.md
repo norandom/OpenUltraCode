@@ -1,21 +1,19 @@
 # OpenUltraCode
 
-OpenUltraCode adds UltraCode-style workflow discipline to opencode. It keeps the model you already selected, then adds prompt assets, role agents, slash commands, verification tools, and a small plugin for state, degradation notices, and request hints.
+OpenUltraCode adds UltraCode-style workflow discipline to OpenCode 2: structured phases, adversarial review, and evidence-based completion checks on top of the opencode session you already run. It keeps the model you already selected, then adds slash commands, role agents, a skill, and a small plugin for workflow state and verification tools.
 
-It uses no proxy. It does not replace the selected model, create synthetic model IDs, or route provider traffic. If you change models, use opencode's normal model selection.
+Model selection is up to you. OpenUltraCode uses no proxy and does not replace the selected model, create synthetic model IDs, or route provider traffic. Change models with opencode's normal model selection at any time; the only place OpenUltraCode names models is the opt-in fusion agents described below, and the installer's init dialogue asks you which model IDs those should use.
 
-## Install
+## Quick start
 
 1. Install the latest release with `curl -fsSL https://raw.githubusercontent.com/norandom/OpenUltraCode/main/install.sh | sh`.
 2. If you already have a checkout and want the development path, run `./install-dev.sh` from the repo root.
-3. The release installer pulls the latest GitHub release asset, copies the skill, slash commands, and agents into `~/.config/opencode/`, asks which fusion model IDs to set, and registers the plugin path in `~/.config/opencode/opencode.json`.
+3. The release installer pulls the latest GitHub release asset, copies the skill, slash commands, and agents into `~/.config/opencode/`, runs the init dialogue that asks which fusion model IDs to set, and registers the plugin package directory in the `plugins` array of `~/.config/opencode/opencode.json`. OpenCode 2 loads local plugins from directories (for example `.opencode/plugins/open-ultracode/index.ts`) via `{ "package": "<path>" }` entries, not from single `.ts` files under the V1 `plugin` key.
 4. Quit and restart opencode so the global plugin, commands, skills, and agents are loaded.
 
 The restart matters because opencode loads plugins, commands, skills, agents, and config at startup. If `/ultracode` does not appear, confirm you restarted opencode after running `install.sh` or `install-dev.sh`.
 
-Release installs do not run Dagger or `pnpm run check` on the user's machine. The GitHub Actions release workflow runs build, ESLint, tests, and asset validation, then publishes `open-ultracode-release.tar.gz` as the GitHub release asset consumed by `install.sh`.
-
-Development installs use pnpm with a 3-day release-age cooldown (`minimumReleaseAge: 4320` in `pnpm-workspace.yaml`). That keeps brand-new package releases out of the install path. `pnpm-workspace.yaml` allows the `esbuild` install script because the TypeScript test runner needs it. `install-dev.sh` also configures the repository pre-commit hook to run Dagger-backed ESLint through `pnpm run lint`.
+Release installs do not run Dagger or `pnpm run check` on your machine. The GitHub Actions release workflow runs build, ESLint, tests, and asset validation, then publishes `open-ultracode-release.tar.gz` as the GitHub release asset consumed by `install.sh`. Development installs use pnpm with a 3-day release-age cooldown (`minimumReleaseAge: 4320` in `pnpm-workspace.yaml`), and `install-dev.sh` also configures the repository pre-commit hook to run Dagger-backed ESLint through `pnpm run lint`.
 
 ## What you get
 
@@ -35,8 +33,8 @@ The skill is named `open-ultracode`. It is not a slash command. The slash comman
 
 Supporting assets:
 
-- Role agents for coordinator, planner, implementer, adversary, reconciler, verifier, and researcher workflows.
-- Fusion agents for panel and arbiter roles. These are intentionally separate from the normal workflow agents.
+- Role agents for coordinator, planner, implementer, adversary, reconciler, verifier, and researcher workflows. These never pin a model; they inherit the active selected model.
+- Fusion agents for panel and arbiter roles. These are intentionally separate from the normal workflow agents and are the only assets that carry a `model:` frontmatter value.
 - Plugin tools for fusion model configuration, workflow status, verification evidence, blocked checks, and completion reports.
 
 ## Examples
@@ -91,7 +89,7 @@ Grounded fusion problem solving:
 
 `/ultrathink` and `/ultrathink-fusion` are not coding commands. They separate supplied facts, verified evidence, assumptions, hypotheses, and recommendations. If the problem depends on facts that are not supplied, they should ask for context or mark the point as unknown instead of drifting into loose recall.
 
-## Fusion model selection
+## Fusion model selection: your choice
 
 `/ultracode-fusion` is explicit opt-in fusion, not transparent routing for every prompt. A run has three model-bearing roles:
 
@@ -101,26 +99,24 @@ Grounded fusion problem solving:
 
 The default fusion concept is `critique-revise-vote`: each panel generates an answer from the same bounded context package, critiques the other panel's answer, revises its own answer, ranks the alternatives against the rubric, and then the decider arbitrates the final response.
 
-The bundled defaults use exact OpenCode Zen catalog references and select each model's native maximum-reasoning variant:
+The bundled defaults are Mistral Large 4 at its native maximum-reasoning variant, so project-local agent auto-loading works before you run the init dialogue:
 
-- `ultracode-fusion-panel-a`: `opencode/deepseek-v4-pro#max` (DeepSeek V4 Pro at max reasoning; there is no direct model named “DeepSeek V4 Max”).
-- `ultracode-fusion-panel-b`: `opencode/glm-5.2#max`.
-- `ultracode-fusion-arbiter`: `opencode/kimi-k3#max`.
+- `ultracode-fusion-panel-a`: `mistral/mistral-large-4#max` (Mistral Large 4 at max reasoning).
+- `ultracode-fusion-panel-b`: `mistral/mistral-large-4#max`.
+- `ultracode-fusion-arbiter`: `mistral/mistral-large-4#max`.
 
-The OpenCode Zen defaults require that provider to be connected. The direct-provider equivalents are `deepseek/deepseek-v4-pro#max`, `zai/glm-5.2#max`, and `moonshotai/kimi-k3#max`; those require the corresponding providers to be connected in OpenCode. The dated `deepseek-v4-pro-0813` identifier is an OpenRouter snapshot, not the direct DeepSeek ID.
+The init dialogue in `install.sh` asks which model each fusion role should use. It reads the current `model` from `~/.config/opencode/opencode.json`, then lets you choose each fusion role with a small terminal menu using the up and down arrows. The default for panel A, panel B, and arbiter is `mistral/mistral-large-4#max`; the menu also offers Z.ai GLM 5.3 through the Mistral endpoint as `mistral/zai-glm-5-3#max`, plus the current opencode model or a custom `provider/model#max` reference. Fresh non-interactive installs use the Mistral defaults; reinstalls preserve each role's existing value.
 
-The release installer's terminal menu uses the up and down arrows and lets you keep these role-specific defaults, retain each role's existing value during reinstall, pick the current OpenCode model, or enter a custom model reference. Fresh non-interactive installs use the three defaults above; reinstalls preserve existing role models.
-
-Show the effective configuration or change any subset of the roles from OpenCode:
+Show the effective configuration or change any subset of the roles from opencode:
 
 ```text
 /ultracode-fusion-models
-/ultracode-fusion-models --panel-a deepseek/deepseek-v4-pro#max --panel-b zai/glm-5.2#max --decider moonshotai/kimi-k3#max
+/ultracode-fusion-models --panel-a mistral/mistral-large-4#max --panel-b mistral/zai-glm-5-3#max --decider mistral/mistral-large-4#max
 ```
 
-The configuration command accepts `provider/model` or `provider/model#max`, checks the live `opencode models --verbose` catalog when shell access is available, and changes only the effective fusion agent files. Non-`max` variants are rejected so they cannot override the required effort. The tool asks for mutation permission, uses temporary files plus stale-content checks and best-effort rollback, and does not modify credentials or the selected coordinator model. Quit and restart OpenCode after changing the models so it reloads the agent metadata.
+The configuration command accepts `provider/model` or `provider/model#max`, checks the live model catalog when shell access is available, and changes only the effective fusion agent files. Non-`max` variants are rejected so they cannot lower the required effort. The tool asks for mutation permission, writes through temporary files with stale-content checks and best-effort rollback, and does not modify credentials or the selected coordinator model. Quit and restart opencode after changing the models so it reloads the agent metadata. Any other model ID your providers expose works too, for example `openai/gpt-5`.
 
-All three bundled models expose a `max` reasoning effort and every fusion agent also sets `reasoningEffort: max`. No shared `thinking` object is injected: provider-specific thinking payloads differ, and Kimi K3 does not accept the same toggle used by some other providers.
+All bundled fusion models expose a `max` reasoning effort and every fusion agent also sets `reasoningEffort: max`. No shared `thinking` object is injected: provider-specific thinking payloads differ across providers.
 
 One-shot independent answers are reported as `panel-consult`, not strong fusion. Strong fusion requires the critique, revision, vote, and arbitration loop.
 
@@ -130,7 +126,7 @@ OpenUltraCode inherits the active selected model from opencode. Normal bundled w
 
 Fusion agents are the deliberate exception: they use explicit `model:` frontmatter so `/ultracode-fusion` can compare two configured opencode models while the selected model remains the coordinator. This still uses opencode's native agent model selection. It is not a proxy, synthetic model ID, provider route, hidden model switch, or replacement for the selected model.
 
-The package can add high-effort request hints only when a provider parameter already exists in the outgoing request. If the provider does not expose a compatible field, OpenUltraCode records a visible degradation notice instead of pretending the behavior is available.
+The package can add high-effort request hints through OpenCode 2's `context` session hook, which exposes semantic request options (`maxTokens`, `reasoningEffort`) per model call. The hints never lower an already-stronger effort setting and only use fields the protocol layer understands; OpenUltraCode never invents raw provider fields or claims hidden reasoning.
 
 ## Safe troubleshooting
 
