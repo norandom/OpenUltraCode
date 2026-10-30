@@ -59,7 +59,7 @@ describe("OpenUltraCode scaffold", () => {
     assert.equal("model" in config, false)
     assert.equal("provider" in config, false)
     assert.equal(manifest.packageManager, "pnpm@11.4.0")
-    assert.equal(manifest.version, "0.2.0")
+    assert.equal(manifest.version, "1.0.0")
     assert.equal(scripts.eslint, "eslint .")
     assert.equal(scripts.lint, "dagger call lint --source .")
     assert.equal(scripts.check, "pnpm run build && pnpm run lint && pnpm run test && pnpm run validate:assets")
