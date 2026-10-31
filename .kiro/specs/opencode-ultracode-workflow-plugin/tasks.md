@@ -166,3 +166,30 @@
   _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 7.3, 7.5, 8.1, 8.2, 8.3, 8.4, 8.5, 10.2, 10.4, 10.5, 12.1, 12.2, 12.3, 12.4, 12.5_
   - Exercise representative comprehensive, debug, spec-audit, adversarial-research, verify, degraded-high-effort, single-session fallback, and strict-gate-blocked flows.
   - Done when validation demonstrates that selected model is preserved, no proxy routes are created, commands route to the expected workflows, unresolved high-confidence findings are handled by policy, and completion cannot be falsely reported without evidence.
+
+## 8. Harden Distribution And Catalog Compliance
+
+- [x] 8.1 Pin and scope repository automation
+  _Boundary: Repository Automation_
+  _Requirements: 13.1, 13.4_
+  - Pin release and catalog-scanner actions to immutable full commit SHAs, keep scanner permissions read-only, disable persisted checkout credentials, and enforce the catalog score threshold without passing repository secrets.
+  - Done when repository validation rejects mutable action tags, excessive scanner permissions, persisted credentials, or a threshold below 75.
+
+- [x] 8.2 Add disclosure and dependency maintenance controls
+  _Boundary: Repository Governance_
+  _Requirements: 13.2, 13.3_
+  - Add a private vulnerability-reporting policy and recurring Dependabot updates for npm and GitHub Actions.
+  - Done when the policy identifies supported versions and the private advisory route, and validation finds both Dependabot ecosystems.
+
+- [x] 8.3 Preserve canonical OpenCode command metadata
+  _Boundary: Command Compatibility_
+  _Requirements: 13.5, 13.6_
+  - Keep command identity filename-based and document the Hashgraph Online scanner 3.57.0 `name`-field mismatch as a false positive against official OpenCode command documentation.
+  - Done when tests reject undocumented command `name` fields and the catalog response cites both sides of the mismatch.
+
+- [x] 8.4 Verify scanner-facing behavior
+  _Boundary: Compliance Validation_
+  _Depends: 8.1, 8.2, 8.3_
+  _Requirements: 13.4, 13.7_
+  - Extend asset validation and tests for the repository controls, run the full project checks, and obtain a source-repository scanner run suitable for linking from the catalog pull request.
+  - Done when local checks pass and the source scanner reports at least the configured minimum score, with any remaining schema mismatch documented for reviewer evaluation.

@@ -137,3 +137,15 @@ The solution shall adapt the useful workflow concepts demonstrated by UltraCode-
 3. The system shall not require secrets, provider keys, or credentials beyond those already used by the selected opencode model.
 4. The system shall not store task content, specs, or findings outside the user's project or configured opencode storage without user-visible consent.
 5. If a workflow handles sensitive or security-relevant findings, then the system shall avoid publishing or externalizing them unless the user explicitly requests it.
+
+### Requirement 13: Distribution And Catalog Compliance
+**Objective:** As a maintainer or catalog reviewer, I want the distributed plugin and its automation to follow reproducible ecosystem practices, so that releases can be reviewed and updated without weakening OpenCode compatibility.
+
+#### Acceptance Criteria
+1. GitHub Actions workflows shall pin third-party actions to immutable full commit SHAs and shall declare only the permissions required by each workflow.
+2. The repository shall publish a `SECURITY.md` that identifies the supported release line and a private vulnerability-reporting path.
+3. Dependabot shall monitor both npm dependencies and GitHub Actions dependencies on a recurring schedule.
+4. The repository shall run the Hashgraph Online plugin scanner from an immutable action commit with `contents: read`, checkout credentials disabled, a minimum score of 75, and no repository secrets supplied to the scan.
+5. Command assets shall follow the documented OpenCode command schema: the filename supplies the command name and frontmatter contains documented fields such as `description`; the project shall not add an undocumented `name` field solely to satisfy a third-party scanner heuristic.
+6. When a catalog scanner reports a schema mismatch with official OpenCode documentation, maintainers shall preserve canonical OpenCode behavior, record the mismatch with evidence, and request a scanner rerun or review rather than introducing incompatible metadata.
+7. Asset validation and tests shall cover the repository compliance files, immutable workflow references, least-privilege scanner settings, and canonical command frontmatter.

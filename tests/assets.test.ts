@@ -27,7 +27,10 @@ const requiredScaffoldPaths = [
   "install-dev.sh",
   "install.ps1",
   "install-dev.ps1",
+  "SECURITY.md",
+  ".github/dependabot.yml",
   ".github/workflows/release.yml",
+  ".github/workflows/plugin-security-scan.yml",
   "pnpm-workspace.yaml"
 ] as const
 
@@ -54,6 +57,9 @@ describe("OpenUltraCode scaffold", () => {
     const psInstaller = readFileSync(join(projectRoot, "install.ps1"), "utf8")
     const psDevInstaller = readFileSync(join(projectRoot, "install-dev.ps1"), "utf8")
     const releaseWorkflow = readFileSync(join(projectRoot, ".github/workflows/release.yml"), "utf8")
+    const scannerWorkflow = readFileSync(join(projectRoot, ".github/workflows/plugin-security-scan.yml"), "utf8")
+    const dependabot = readFileSync(join(projectRoot, ".github/dependabot.yml"), "utf8")
+    const securityPolicy = readFileSync(join(projectRoot, "SECURITY.md"), "utf8")
 
     assert.equal(config.$schema, "https://opencode.ai/config.json")
     assert.deepEqual(config.plugins, [{ package: "./.opencode/plugins/open-ultracode" }])
@@ -100,6 +106,15 @@ describe("OpenUltraCode scaffold", () => {
     assert.match(releaseWorkflow, /open-ultracode-release\.tar\.gz/)
     assert.match(releaseWorkflow, /gh release create/)
     assert.match(releaseWorkflow, /--prerelease/)
+    assert.match(releaseWorkflow, /actions\/checkout@[0-9a-f]{40}/)
+    assert.match(releaseWorkflow, /actions\/setup-node@[0-9a-f]{40}/)
+    assert.match(scannerWorkflow, /hashgraph-online\/ai-plugin-scanner-action@[0-9a-f]{40}/)
+    assert.match(scannerWorkflow, /persist-credentials: false/)
+    assert.match(scannerWorkflow, /min_score: 75/)
+    assert.doesNotMatch(scannerWorkflow, /\bsecrets\s*:/)
+    assert.match(dependabot, /package-ecosystem: "npm"/)
+    assert.match(dependabot, /package-ecosystem: "github-actions"/)
+    assert.match(securityPolicy, /security\/advisories\/new/)
 
     assert.deepEqual(manifest.files, [
       ".opencode",
@@ -156,6 +171,29 @@ describe("OpenUltraCode scaffold", () => {
     assert.equal(result.ok, false)
     assert.match(result.errors.join("\n"), /commands\/ultracode\.md.*model/i)
     assert.match(result.errors.join("\n"), /agents\/open-ultracode\.md.*model/i)
+  })
+
+  it("rejects undocumented command name frontmatter", () => {
+    const root = createAssetFixture()
+    writeFileSync(
+      join(root, ".opencode/commands/ultracode.md"),
+      commandAsset("Run comprehensive workflow", "comprehensive", "name: ultracode")
+    )
+
+    const result = validateAssets(root)
+
+    assert.equal(result.ok, false)
+    assert.match(result.errors.join("\n"), /commands\/ultracode\.md.*must not include name/i)
+  })
+
+  it("rejects mutable workflow action references", () => {
+    const root = createAssetFixture()
+    writeFileSync(join(root, ".github/workflows/release.yml"), "steps:\n  - uses: actions/checkout@v4\n")
+
+    const result = validateAssets(root)
+
+    assert.equal(result.ok, false)
+    assert.match(result.errors.join("\n"), /checkout@v4.*full commit SHA/i)
   })
 
   it("allows model frontmatter only for approved fusion agents", () => {
@@ -240,11 +278,28 @@ function createAssetFixture(): string {
   )
   writeFileSync(join(root, "tsconfig.json"), "{}\n")
   writeFileSync(join(root, "README.md"), "# OpenUltraCode\n")
+  writeFileSync(join(root, "SECURITY.md"), "# Security Policy\n\n## Supported Versions\n\nUse security/advisories/new. Do not open a public issue.\n")
   writeFileSync(join(root, "install.sh"), "#!/usr/bin/env sh\n")
   writeFileSync(join(root, "install-dev.sh"), "#!/usr/bin/env sh\n")
   writeFileSync(join(root, "install.ps1"), "# PowerShell installer\n")
   writeFileSync(join(root, "install-dev.ps1"), "# PowerShell dev installer\n")
-  writeFileSync(join(root, ".github/workflows/release.yml"), "name: Release\n")
+  writeFileSync(join(root, ".github/workflows/release.yml"), "steps:\n  - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262\n")
+  writeFileSync(join(root, ".github/workflows/plugin-security-scan.yml"), `permissions:
+  contents: read
+steps:
+  - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+    with:
+      persist-credentials: false
+  - uses: hashgraph-online/ai-plugin-scanner-action@c96833de5070fab4e564010b5ab6e3c3d7e07a3e
+    with:
+      min_score: 75
+      fail_on_severity: none
+`)
+  writeFileSync(join(root, ".github/dependabot.yml"), `version: 2
+updates:
+  - package-ecosystem: "npm"
+  - package-ecosystem: "github-actions"
+`)
   writeFileSync(join(root, "pnpm-workspace.yaml"), "allowBuilds:\n  esbuild: true\nminimumReleaseAge: 4320\n")
   writeFileSync(join(root, "scripts/validate-assets.ts"), "")
 

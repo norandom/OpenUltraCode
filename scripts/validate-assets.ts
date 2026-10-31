@@ -21,7 +21,10 @@ const requiredScaffoldPaths = [
   "install-dev.sh",
   "install.ps1",
   "install-dev.ps1",
+  "SECURITY.md",
+  ".github/dependabot.yml",
   ".github/workflows/release.yml",
+  ".github/workflows/plugin-security-scan.yml",
   "src",
   ".opencode/plugins",
   ".opencode/plugins/open-ultracode",
@@ -77,6 +80,7 @@ export function validateAssets(root = process.cwd()): AssetValidationResult {
   validatePlugin(root, errors)
   validateFusionConfigTool(root, errors)
   validateOpenCodeConfig(root, errors)
+  validateComplianceControls(root, errors)
   validateSkill(root, errors)
   validateCommands(root, errors)
   validateAgents(root, errors)
@@ -156,6 +160,9 @@ function validateCommands(root: string, errors: string[]): void {
     if (!document.frontmatter.has("description")) {
       errors.push(`${relativePath} frontmatter must include description`)
     }
+    if (document.frontmatter.has("name")) {
+      errors.push(`${relativePath} frontmatter must not include name; OpenCode derives command names from filenames`)
+    }
     rejectModelOverride(relativePath, document, errors)
     if (fileName === "ultracode-fusion-models.md") {
       requireBody(relativePath, document.body, [/\$ARGUMENTS/, /open_ultracode_configure_fusion/i, /provider\/model/i, /selected model/i], errors)
@@ -164,6 +171,59 @@ function validateCommands(root: string, errors: string[]): void {
     requireBody(relativePath, document.body, [/\$ARGUMENTS/, /selected model/i, /Workflow mode:/i], errors)
     if (!/missing task context|not provide enough task context/i.test(document.body)) {
       errors.push(`${relativePath} must ask focused questions when task context is missing`)
+    }
+  }
+}
+
+function validateComplianceControls(root: string, errors: string[]): void {
+  const releasePath = ".github/workflows/release.yml"
+  const releaseWorkflow = readAsset(root, releasePath, errors)
+  if (releaseWorkflow !== undefined) {
+    validateImmutableActionReferences(releasePath, releaseWorkflow, errors)
+  }
+
+  const scannerPath = ".github/workflows/plugin-security-scan.yml"
+  const scannerWorkflow = readAsset(root, scannerPath, errors)
+  if (scannerWorkflow !== undefined) {
+    validateImmutableActionReferences(scannerPath, scannerWorkflow, errors)
+    for (const [pattern, message] of [
+      [/^permissions:\s*\n {2}contents: read\s*$/mu, "must grant only read access to contents"],
+      [/persist-credentials:\s*false/u, "must disable persisted checkout credentials"],
+      [/hashgraph-online\/ai-plugin-scanner-action@[0-9a-f]{40}/u, "must use the pinned Hashgraph Online scanner action"],
+      [/min_score:\s*["']?75["']?/u, "must enforce a minimum scanner score of 75"],
+      [/fail_on_severity:\s*none/u, "must report findings without changing the catalog score gate"]
+    ] as const) {
+      if (!pattern.test(scannerWorkflow)) errors.push(`${scannerPath} ${message}`)
+    }
+    if (/\bsecrets\s*:/u.test(scannerWorkflow)) {
+      errors.push(`${scannerPath} must not pass repository secrets to the scanner`)
+    }
+  }
+
+  const dependabotPath = ".github/dependabot.yml"
+  const dependabot = readAsset(root, dependabotPath, errors)
+  if (dependabot !== undefined) {
+    for (const ecosystem of ["npm", "github-actions"] as const) {
+      if (!new RegExp(`package-ecosystem:\\s*["']${ecosystem}["']`, "u").test(dependabot)) {
+        errors.push(`${dependabotPath} must monitor ${ecosystem}`)
+      }
+    }
+  }
+
+  const securityPath = "SECURITY.md"
+  const securityPolicy = readAsset(root, securityPath, errors)
+  if (securityPolicy !== undefined) {
+    for (const pattern of [/supported versions/i, /security\/advisories\/new/i, /do not open a public issue/i]) {
+      if (!pattern.test(securityPolicy)) errors.push(`${securityPath} is missing required disclosure guidance matching ${pattern}`)
+    }
+  }
+}
+
+function validateImmutableActionReferences(relativePath: string, content: string, errors: string[]): void {
+  for (const match of content.matchAll(/^\s*(?:-\s*)?uses:\s*([^\s#]+).*$/gmu)) {
+    const reference = match[1]
+    if (reference !== undefined && !/@[0-9a-f]{40}$/u.test(reference)) {
+      errors.push(`${relativePath} action ${reference} must be pinned to a full commit SHA`)
     }
   }
 }

@@ -455,6 +455,14 @@ export interface CompletionReport {
 - Run with high-effort disabled and confirm no high-effort options are requested.
 - Run with strict verification and confirm final output cannot claim verified completion without evidence.
 
+## Distribution And Catalog Compliance
+
+Repository automation is part of the distributable plugin's trust boundary. Release and scanner workflows pin third-party actions to full commit SHAs. The catalog scanner runs with read-only repository permissions, does not persist checkout credentials, receives no repository secrets, and enforces the catalog's minimum score of 75. Dependabot keeps npm and GitHub Actions references reviewable through small recurring updates, while `SECURITY.md` routes vulnerability reports to GitHub's private advisory channel.
+
+OpenCode derives custom command names from filenames. Command frontmatter therefore uses the documented fields, including `description`, and deliberately omits an undocumented `name` field. Hashgraph Online scanner 3.57.0 currently requires both `name` and `description`; this is treated as a documented compatibility false positive, not as authority to change the OpenCode asset schema. Asset tests lock in the canonical behavior so future catalog remediation cannot silently make the commands nonstandard.
+
+The source-repository scanner workflow provides evidence before a catalog rerun. A catalog review should link the successful source run, identify any remaining schema mismatch with both the official OpenCode documentation and scanner implementation, and request reevaluation of the contribution.
+
 ## Security And Privacy
 
 - OpenUltraCode respects opencode permissions for reads, edits, command execution, web access, task delegation, and external directories.
@@ -539,6 +547,13 @@ export interface CompletionReport {
 | 12.3 | No additional secrets are required. |
 | 12.4 | State is project-local by default and transcript persistence is disabled. |
 | 12.5 | Sensitive findings are not externalized unless user explicitly shares them. |
+| 13.1 | Release and scanner workflows pin third-party actions to immutable commit SHAs and declare scoped permissions. |
+| 13.2 | `SECURITY.md` documents supported versions and private disclosure through GitHub Security Advisories. |
+| 13.3 | `.github/dependabot.yml` monitors npm and GitHub Actions dependencies. |
+| 13.4 | The plugin scanner workflow uses the catalog-recommended pinned action, read-only contents, non-persisted credentials, and a score threshold of 75. |
+| 13.5 | Command validation treats filenames as command names and rejects an undocumented command `name` field. |
+| 13.6 | Catalog scanner mismatches are documented with official-schema and scanner-implementation evidence. |
+| 13.7 | Asset validation and tests enforce the distribution controls. |
 
 ## Implementation Notes
 
@@ -547,3 +562,4 @@ export interface CompletionReport {
 - Keep generated prompts in Markdown files, not embedded TypeScript strings, except for short standardized degradation messages.
 - Keep default assets model-neutral. If examples show model-specific options, mark them as opt-in examples only.
 - Validate all generated opencode assets against `https://opencode.ai/config.json` semantics where applicable.
+- Treat official OpenCode command documentation as authoritative when third-party scanner heuristics disagree with the command schema.
