@@ -74,7 +74,7 @@ describe("OpenUltraCode scaffold", () => {
     assert.equal("model" in config, false)
     assert.equal("provider" in config, false)
     assert.equal(manifest.packageManager, "pnpm@11.4.0")
-    assert.equal(manifest.version, "1.3.3")
+    assert.equal(manifest.version, "2.0.0")
     // One offline quality gate shared by the pre-commit hook, CI, and install-dev; Docker is optional.
     assert.equal(scripts.lint, "eslint .")
     assert.equal(scripts["lint:container"], "dagger call lint --source .")
