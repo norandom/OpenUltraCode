@@ -9,8 +9,10 @@
 //   node scripts/installer-lib.mjs get-agent-model <agent.md>
 //   node scripts/installer-lib.mjs set-agent-model <agent.md> <provider/model[#max]>
 //   node scripts/installer-lib.mjs validate-model <provider/model[#max]>
+//   node scripts/installer-lib.mjs list-models --config-dir <dir>
 
-import fs from "node:fs"
+import { spawnSync } from "node:child_process"
+import fs, { realpathSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -216,6 +218,82 @@ export function setAgentModel(file, model) {
   if (updated !== content) writeFileAtomically(file, updated)
 }
 
+/** Providers of opencode's own hosted catalog; listed after the user's providers. */
+export const catalogProviders = new Set(["opencode", "opencode-go"])
+const plainModelIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[^\s#]+$/u
+
+/** Reads `provider/model` lines from `opencode models` output. */
+export function parseModelList(text) {
+  return text.split(/\r?\n/u).map((line) => line.trim()).filter((line) => plainModelIdPattern.test(line))
+}
+
+/** Model IDs the user configured: `model`, `small_model`, and `provider.<id>.models.<id>`. */
+export function configuredModels(config) {
+  const models = []
+  for (const key of ["model", "small_model"]) {
+    if (typeof config[key] === "string") models.push(config[key].replace(/#[^#]+$/u, ""))
+  }
+  const providers = config.provider !== null && typeof config.provider === "object" ? config.provider : {}
+  for (const [providerID, provider] of Object.entries(providers)) {
+    const entries = provider !== null && typeof provider === "object" ? provider.models : undefined
+    if (entries !== null && typeof entries === "object") {
+      for (const modelID of Object.keys(entries)) models.push(`${providerID}/${modelID}`)
+    }
+  }
+  return models.filter((model) => plainModelIdPattern.test(model))
+}
+
+/** Removes duplicates and lists the user's own providers before opencode's hosted catalog. */
+export function orderModels(models) {
+  const unique = [...new Set(models)]
+  const isCatalog = (model) => catalogProviders.has(model.slice(0, model.indexOf("/")))
+  return [...unique.filter((model) => !isCatalog(model)), ...unique.filter(isCatalog)]
+}
+
+function runOpencodeModels() {
+  // stdin is ignored: under `curl | sh` it is the installer script itself.
+  const options = { encoding: "utf8", timeout: 60_000, stdio: ["ignore", "pipe", "ignore"] }
+  // On Windows opencode is a .cmd shim, which needs a shell; a fixed command string avoids
+  // passing arguments through the shell (DEP0190).
+  const result = process.platform === "win32"
+    ? spawnSync("opencode models", { ...options, shell: true })
+    : spawnSync("opencode", ["models"], options)
+  return { ok: result.error === undefined && result.status === 0, stdout: result.stdout ?? "" }
+}
+
+function sleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
+/**
+ * Lists the model IDs offered in the installer menu: the user's configured models plus
+ * everything `opencode models` reports, with the user's providers first. `opencode models`
+ * fails while plugins are still activating ("Location plugins did not finish activating"),
+ * so it is retried; configured models are offered even when it never succeeds.
+ */
+export function listModels({ configDir, run = runOpencodeModels, attempts = 3, delayMs = 2000 }) {
+  const configured = []
+  for (const name of ["opencode.json", "opencode.jsonc"]) {
+    try {
+      const config = readConfig(path.join(configDir, name))
+      if (config !== undefined) configured.push(...configuredModels(config))
+    } catch {
+      // A broken config file must not hide the detected models; register reports it.
+    }
+  }
+
+  let detected = []
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const result = run()
+    if (result.ok) {
+      detected = parseModelList(result.stdout)
+      break
+    }
+    if (attempt < attempts) sleep(delayMs)
+  }
+  return orderModels([...configured, ...detected])
+}
+
 function readOption(args, name) {
   const index = args.indexOf(name)
   const value = index === -1 ? undefined : args[index + 1]
@@ -243,12 +321,16 @@ export function main(argv, log = console.log) {
     case "validate-model":
       assertModelId(args[0])
       return
+    case "list-models":
+      for (const model of listModels({ configDir: readOption(args, "--config-dir") })) log(model)
+      return
     default:
       throw new InstallerError(`unknown command: ${String(command)}`)
   }
 }
 
-if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Compare real paths: argv[1] keeps symlinks (macOS /var -> /private/var) that import.meta.url resolves.
+if (process.argv[1] !== undefined && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   try {
     main(process.argv.slice(2))
   } catch (error) {

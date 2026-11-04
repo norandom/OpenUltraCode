@@ -57,11 +57,10 @@ lib() {
   node "$INSTALLER_LIB" "$@"
 }
 
+# Your providers' models first, then opencode's hosted catalog; see list-models in
+# scripts/installer-lib.mjs (it retries `opencode models` and adds models from your config).
 detect_opencode_models() {
-  if ! command -v opencode >/dev/null 2>&1; then
-    return 0
-  fi
-  opencode models </dev/null 2>/dev/null | tr -d '\r' | grep -E '^[A-Za-z0-9][A-Za-z0-9._-]*/[^[:space:]#]+$' || true
+  lib list-models --config-dir "$OPENCODE_CONFIG_DIR" || true
 }
 
 has_tty() {

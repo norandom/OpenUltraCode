@@ -7,7 +7,7 @@
 // installer tests use this script, so the archive cannot drift from what the installers need.
 
 import { spawnSync } from "node:child_process"
-import { existsSync } from "node:fs"
+import { existsSync, realpathSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -49,6 +49,7 @@ export function buildReleaseArchive(out) {
   return path.resolve(out)
 }
 
-if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Compare real paths: argv[1] keeps symlinks (macOS /var -> /private/var) that import.meta.url resolves.
+if (process.argv[1] !== undefined && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   console.log(buildReleaseArchive(process.argv[2] ?? "open-ultracode-release.tar.gz"))
 }

@@ -44,8 +44,8 @@ const rules: ReadonlyArray<{ readonly applies: readonly string[]; readonly test:
   },
   {
     applies: allInstallers,
-    test: (content) => /opencode models/u.test(content),
-    message: "must offer model IDs detected from the user's opencode setup via 'opencode models'"
+    test: (content) => /list-models --config-dir|list-models "--config-dir"/u.test(content),
+    message: "must offer the user's models via scripts/installer-lib.mjs list-models (providers first)"
   },
   {
     applies: allInstallers,

@@ -8,8 +8,8 @@
 // With a raw-mode TTY it shows an arrow-key menu on stderr; otherwise (pipes, mintty,
 // CI) it falls back to a numbered prompt that reads one line.
 
+import { realpathSync } from "node:fs"
 import readline from "node:readline"
-import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 export const customChoice = "Custom model ID"
@@ -207,6 +207,7 @@ async function main(argv) {
   }
 }
 
-if (process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Compare real paths: argv[1] keeps symlinks (macOS /var -> /private/var) that import.meta.url resolves.
+if (process.argv[1] !== undefined && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   process.exitCode = await main(process.argv.slice(2))
 }

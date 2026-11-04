@@ -78,12 +78,13 @@ function Assert-ModelId([string]$Model, [string]$Name) {
   if ($Model -notmatch $ModelIdPattern) { throw "$Name '$Model' must be provider/model or provider/model#max." }
 }
 
+# Your providers' models first, then opencode's hosted catalog; see list-models in
+# scripts/installer-lib.mjs (it retries `opencode models` and adds models from your config).
 function Get-OpenCodeModels {
-  if (-not (Get-Command opencode -ErrorAction SilentlyContinue)) { return @() }
   $ErrorActionPreference = "Continue"
-  $output = opencode models 2>$null
+  $output = node $InstallerLib list-models "--config-dir" $OpenCodeConfigDir 2>$null
   if ($LASTEXITCODE -ne 0 -or -not $output) { return @() }
-  return @($output | ForEach-Object { "$_".Trim() } | Where-Object { $_ -match $ModelIdPattern } | Select-Object -Unique)
+  return @($output | ForEach-Object { "$_".Trim() } | Where-Object { $_ -match $ModelIdPattern })
 }
 
 function Test-InteractiveConsole {

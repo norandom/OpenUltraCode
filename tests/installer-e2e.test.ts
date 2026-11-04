@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import { spawnSync, type SpawnSyncReturns } from "node:child_process"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
@@ -115,7 +115,9 @@ for (const shell of powershells) {
       )
       const paths = ourPluginPaths(readConfig(configDir))
       assert.equal(paths.length, 1)
-      assert.ok(paths[0]?.replace(/\\/g, "/").startsWith(installDir.replace(/\\/g, "/")), paths[0])
+      // Compare real paths: CI temp directories use 8.3 short names (RUNNER~1) on Windows.
+      const normalize = (value: string) => realpathSync.native(value).replace(/\\/g, "/").toLowerCase()
+      assert.ok(paths[0] !== undefined && normalize(paths[0]).startsWith(normalize(installDir)), paths[0])
       assert.equal(agentModel(configDir, "ultracode-fusion-panel-b.md"), "openai/gpt-x")
       const configAfterInstall = readFileSync(join(configDir, "opencode.json"), "utf8")
 

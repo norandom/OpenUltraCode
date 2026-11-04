@@ -17,3 +17,13 @@ export declare function getAgentModel(file: string): string | undefined
 export declare function assertModelId(model: unknown): void
 export declare function setAgentModel(file: string, model: string): void
 export declare function main(argv: readonly string[], log?: (line: string) => void): void
+export declare const catalogProviders: ReadonlySet<string>
+export declare function parseModelList(text: string): string[]
+export declare function configuredModels(config: OpenCodeConfig): string[]
+export declare function orderModels(models: readonly string[]): string[]
+export declare function listModels(input: {
+  configDir: string
+  run?: () => { ok: boolean; stdout: string }
+  attempts?: number
+  delayMs?: number
+}): string[]

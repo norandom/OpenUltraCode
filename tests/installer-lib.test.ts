@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
+import { cpSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
 import { spawnSync } from "node:child_process"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
@@ -6,7 +6,11 @@ import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 
 import {
+  configuredModels,
   getAgentModel,
+  listModels,
+  orderModels,
+  parseModelList,
   normalizePluginPath,
   parseJsonc,
   registerPlugin,
@@ -193,6 +197,33 @@ describe("installer agent model editing", () => {
   })
 })
 
+describe("installer model list", () => {
+  it("lists the user's providers before opencode's hosted catalog", () => {
+    assert.deepEqual(
+      orderModels(["opencode/big-pickle", "vibe-oidc/mistral-large-4", "opencode-go/kimi", "mistral/zai-glm-5-3", "vibe-oidc/mistral-large-4"]),
+      ["vibe-oidc/mistral-large-4", "mistral/zai-glm-5-3", "opencode/big-pickle", "opencode-go/kimi"]
+    )
+  })
+
+  it("reads model IDs from opencode models output and from the user's config", () => {
+    assert.deepEqual(parseModelList("opencode/a\r\nvibe-oidc/b\nnot a model\n  mistral/c  \n"), ["opencode/a", "vibe-oidc/b", "mistral/c"])
+    assert.deepEqual(
+      configuredModels({ model: "vibe-oidc/mistral-large-4#max", small_model: "vibe-oidc/mistral-small", provider: { local: { models: { "qwen-coder": {} } } } }),
+      ["vibe-oidc/mistral-large-4", "vibe-oidc/mistral-small", "local/qwen-coder"]
+    )
+  })
+
+  it("retries opencode models while plugins are activating and keeps configured models when it never succeeds", () => {
+    const dir = configDir({ "opencode.jsonc": "{ // mine\n \"model\": \"vibe-oidc/mistral-large-4\" }" })
+    let calls = 0
+    const flaky = () => (++calls < 3 ? { ok: false, stdout: "" } : { ok: true, stdout: "opencode/big-pickle\nvibe-oidc/mistral-small\n" })
+
+    assert.deepEqual(listModels({ configDir: dir, run: flaky, delayMs: 1 }), ["vibe-oidc/mistral-large-4", "vibe-oidc/mistral-small", "opencode/big-pickle"])
+    assert.equal(calls, 3)
+    assert.deepEqual(listModels({ configDir: dir, run: () => ({ ok: false, stdout: "" }), delayMs: 1 }), ["vibe-oidc/mistral-large-4"])
+  })
+})
+
 describe("installer-lib command line", () => {
   function run(...args: string[]) {
     return spawnSync(process.execPath, [libPath, ...args], { encoding: "utf8" })
@@ -207,6 +238,17 @@ describe("installer-lib command line", () => {
       assert.equal(result.status, 1, result.stderr)
       assert.match(result.stderr, /^OpenUltraCode installer: /u)
     }
+  })
+
+  it("runs when started through a symlinked directory (macOS /var -> /private/var)", () => {
+    const real = mkdtempSync(join(tmpdir(), "open-ultracode-real-"))
+    cpSync(libPath, join(real, "installer-lib.mjs"))
+    const link = join(mkdtempSync(join(tmpdir(), "open-ultracode-link-")), "scripts")
+    symlinkSync(real, link, "junction")
+
+    const result = spawnSync(process.execPath, [join(link, "installer-lib.mjs"), "validate-model", "bogus"], { encoding: "utf8" })
+
+    assert.equal(result.status, 1, "the command must run and reject the invalid model instead of exiting silently")
   })
 
   it("registers through the command line", () => {
