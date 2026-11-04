@@ -325,9 +325,23 @@ describe("OpenUltraCode OpenCode 2 plugin entry point", () => {
 
     await getSessionHook(ctx, "context")(event as never)
 
-    // mistral-large-4 allows 262144 output tokens and offers a max variant, so xhigh is sent as is.
     assert.equal(event.options.maxTokens, 128000)
-    assert.equal(event.options.reasoningEffort, "xhigh")
+    assert.equal(event.options.reasoningEffort, "high")
+  })
+
+  it("never sends reasoning effort xhigh, which Mistral rejects with 400 Bad Request", async () => {
+    // Captured failure: mistral-large-4 (which offers a "max" variant) with max_tokens 256000
+    // succeeded with reasoning_effort "high" and failed with "xhigh".
+    const ctx = await setupPlugin(await createProjectRoot(), { enabled: true })
+    const event = { options: { maxTokens: 256000 }, model: { providerID: "mistral", id: "mistral-large-4" } } as unknown as SessionContextEvent
+    const userChoice = { options: { reasoningEffort: "max" }, model: { providerID: "mistral", id: "mistral-large-4" } } as unknown as SessionContextEvent
+
+    await getSessionHook(ctx, "context")(event as never)
+    await getSessionHook(ctx, "context")(userChoice as never)
+
+    assert.deepEqual(event.options, { maxTokens: 256000, reasoningEffort: "high" })
+    // A stronger effort that opencode itself already set is kept, never overwritten.
+    assert.equal(userChoice.options.reasoningEffort, "max")
   })
 
   it("clamps high-effort output tokens and effort to what the selected model supports", async () => {

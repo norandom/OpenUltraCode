@@ -330,7 +330,9 @@ export function installSummary({ configDir, sourceDir }) {
     ...fusionRoles.map(([label, file]) => `  ${`${label}:`.padEnd(16)} ${getAgentModel(path.join(configDir, "agents", file))?.replace(/#max$/u, " (variant max)") ?? "not set"}`),
     `  Commands:        ${commands.length > 0 ? commands.join(" ") : "none"}`,
     `  Agents:          ${shipped("agents").length} installed in ${path.join(configDir, "agents")}`,
-    "Restart opencode to load the plugin, commands, skills, and agents."
+    // opencode reloads a changed config live, and providers added by other plugins (for
+    // example vibe-oidc) can stay missing in a running opencode until it restarts.
+    "Restart opencode now to load the plugin, commands, skills, and agents. Until it restarts, providers from other plugins may be missing."
   ]
 }
 

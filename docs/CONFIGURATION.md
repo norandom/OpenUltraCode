@@ -33,7 +33,7 @@ Example local plugin entry in opencode configuration:
 - `verificationGate`: `strict`, `advisory`, or `disabled`.
 - `adversarialReview`: `required`, `recommended`, or `disabled`.
 - `highEffort.enabled`: enables best-effort request hints on the OpenCode 2 `context` hook.
-- `highEffort.effort`: `medium`, `high`, or `xhigh`; mapped to the semantic `reasoningEffort` request option. `xhigh` is sent only to models that offer an `xhigh` or `max` variant; other models receive `high`.
+- `highEffort.effort`: `medium`, `high`, or `xhigh`; mapped to the semantic `reasoningEffort` request option. `xhigh` is sent as `high`: providers reject the raw value (Mistral answers `400 Bad Request` for `reasoning_effort: "xhigh"`). A stronger effort that opencode already set, for example through a model variant, is kept.
 - `highEffort.outputTokens`: desired output-token budget, applied as the semantic `maxTokens` request option and capped at the selected model's output limit (`limit.output` from opencode's model list). When opencode does not know the model, the configured value is used.
 - `state.directory`: project-relative workflow state directory.
 - `notices.showDegradation`: controls whether visible degradation notices are recorded when supported.

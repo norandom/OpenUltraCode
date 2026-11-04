@@ -194,7 +194,6 @@ export interface ModelInfoSummary {
   readonly modelID?: string
   readonly providerID: string
   readonly limit?: { readonly output?: number }
-  readonly variants?: ReadonlyArray<{ readonly id: string }>
 }
 
 export interface ModelDomain {

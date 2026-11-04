@@ -138,7 +138,8 @@ for (const shell of powershells) {
       assert.equal(paths.length, 1)
       // Compare real paths: CI temp directories use 8.3 short names (RUNNER~1) on Windows.
       const normalize = (value: string) => realpathSync.native(value).replace(/\\/g, "/").toLowerCase()
-      assert.ok(paths[0] !== undefined && normalize(paths[0]).startsWith(normalize(installDir)), paths[0])
+      const [registered = ""] = paths
+      assert.ok(normalize(registered).startsWith(normalize(installDir)), registered)
       assert.equal(agentModel(configDir, "ultracode-fusion-panel-b.md"), "openai/gpt-x")
       const configAfterInstall = readFileSync(join(configDir, "opencode.json"), "utf8")
 

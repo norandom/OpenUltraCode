@@ -97,7 +97,7 @@ export async function registerOpenUltraCode(
 const modelListTtlMs = 60_000
 
 /**
- * Looks up the selected model's output limit and variants from opencode's model list, cached
+ * Looks up the selected model's output limit from opencode's model list, cached
  * for a minute. Unknown models or a failing lookup yield no limits, so the configured values apply.
  */
 function createModelLimitsLookup(ctx: OpenCodePluginContext): (model: ModelRef | undefined) => Promise<ModelLimits> {
@@ -114,10 +114,7 @@ function createModelLimitsLookup(ctx: OpenCodePluginContext): (model: ModelRef |
     }
     const info = cache.models.find((entry) => entry.providerID === model.providerID && (entry.id === model.id || entry.modelID === model.id))
     if (info === undefined) return {}
-    return {
-      ...(info.limit?.output === undefined ? {} : { outputTokens: info.limit.output }),
-      ...(info.variants === undefined ? {} : { variants: info.variants.map((variant) => variant.id) })
-    }
+    return info.limit?.output === undefined ? {} : { outputTokens: info.limit.output }
   }
 }
 

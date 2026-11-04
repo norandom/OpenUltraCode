@@ -15,8 +15,6 @@ export type ChatParams = Record<string, unknown>
 export interface ModelLimits {
   /** Maximum output tokens of the model (`limit.output`). */
   readonly outputTokens?: number
-  /** Variant IDs the model offers, for example "high", "xhigh", or "max". */
-  readonly variants?: readonly string[]
 }
 
 export function applyHighEffortRequestBehavior(
@@ -37,7 +35,7 @@ export function applyHighEffortRequestBehavior(
     appliedFields.push("maxTokens")
   }
 
-  const requested = toProviderReasoningEffort(options.effort, limits.variants)
+  const requested = toProviderReasoningEffort(options.effort)
   params.reasoningEffort =
     typeof params.reasoningEffort === "string" ? strongestReasoningEffort(params.reasoningEffort, requested) : requested
   appliedFields.push("reasoningEffort")
@@ -45,14 +43,17 @@ export function applyHighEffortRequestBehavior(
   return { appliedFields }
 }
 
-/** "xhigh" is only sent to models that offer an xhigh or max variant; others get "high". */
-function toProviderReasoningEffort(effort: HighEffortLevel, variants: readonly string[] | undefined): "medium" | "high" | "xhigh" {
-  if (effort === "medium") return "medium"
-  if (effort === "xhigh" && variants !== undefined && (variants.includes("xhigh") || variants.includes("max"))) return "xhigh"
-  return "high"
+/**
+ * The plugin never sends "xhigh" itself: providers reject it (Mistral answers 400 Bad Request
+ * for reasoning_effort "xhigh" while "high" succeeds), and a model offering an opencode "max"
+ * variant says nothing about which raw values its API accepts. A stronger effort the user
+ * selected through opencode (for example a variant) is still kept by strongestReasoningEffort.
+ */
+function toProviderReasoningEffort(effort: HighEffortLevel): "medium" | "high" {
+  return effort === "medium" ? "medium" : "high"
 }
 
-function strongestReasoningEffort(current: string, requested: "medium" | "high" | "xhigh"): string {
+function strongestReasoningEffort(current: string, requested: "medium" | "high"): string {
   const strength: Readonly<Record<string, number>> = {
     none: 0,
     minimal: 1,
