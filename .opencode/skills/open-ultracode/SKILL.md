@@ -135,6 +135,18 @@ When the spec is incomplete, do not fill gaps silently. State the assumption, ex
 - Block the task when implementation would encode an unsafe or unreviewable policy.
 - Convert the ambiguity into a spec-audit finding when working in research mode.
 
+## Workflow State Tools
+
+OpenUltraCode commands start a project-local workflow record automatically. Keep it current with the plugin tools when they are available:
+
+- `open_ultracode_record_intake`: after intake, record the goal, constraints, assumptions, and acceptance criteria (`AC-1`, `AC-2`, ...), and move the `phase` as the work progresses. Use it to resume a blocked workflow once the blocker is resolved.
+- `open_ultracode_record_verification`: record each check that ran, with its result and the criteria it covers.
+- `open_ultracode_record_blocked_check`: record a check that could not run, with the reason and residual risk.
+- `open_ultracode_status`: read the current phase, open findings, verification, and degradation notices.
+- `open_ultracode_completion_report`: produce the final status through the verification gate instead of judging completion yourself.
+
+If the tools are unavailable, keep the same information in the conversation and say that the workflow record is degraded.
+
 ## Single-Session Fallback
 
 If subagents or multi-agent execution are unavailable, use single-session fallback. Run the coordinator, planner, implementer, adversary, reconciler, and verifier roles in order inside the current session. Keep role boundaries visible, preserve the selected model, and record degradation when the fallback changes confidence or review coverage.

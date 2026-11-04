@@ -5,7 +5,8 @@
  * domain-scoped hooks (`ctx.session.hook`, `ctx.tool.hook`, ...) instead of the
  * V1 string-keyed hooks object. These types describe only the surface this
  * plugin uses so the package does not need a runtime dependency on
- * `@opencode/plugin`.
+ * `@opencode/plugin`. tests/plugin-contract.test.ts type-checks this surface against the
+ * real `@opencode/plugin` types (a devDependency), so drift fails `pnpm run check`.
  */
 
 export interface Registration {
@@ -13,7 +14,11 @@ export interface Registration {
 }
 
 export interface PluginLocation {
+  /** The session's working directory; may be a subdirectory of the project. */
   readonly directory: string
+  readonly project: {
+    readonly directory: string
+  }
 }
 
 export interface ModelRef {
@@ -59,11 +64,17 @@ export interface RequestOptions extends Record<string, unknown> {
   stop?: string[]
 }
 
+/** A plain system prompt part (`@opencode/ai` SystemPart). */
+export interface SystemPart {
+  readonly type: "text"
+  readonly text: string
+}
+
 export interface SessionRequestEvent {
   readonly sessionID: string
   readonly agent: string
   readonly model: ModelRef
-  system: unknown[]
+  system: SystemPart[]
   messages: Message[]
   options: RequestOptions
 }
@@ -99,6 +110,8 @@ export interface PermissionEvaluationEvent {
   readonly action: string
   readonly resources: readonly string[]
   readonly metadata?: Record<string, unknown>
+  /** Set when the evaluation belongs to a tool call. */
+  readonly source?: { readonly type: string }
   effect: "allow" | "ask" | "deny"
   message?: string
 }
@@ -109,9 +122,20 @@ export interface PermissionRequestInfo {
   readonly message?: string
 }
 
+export interface PermissionAssertInput {
+  readonly sessionID: string
+  readonly agent?: string
+  readonly action: string
+  readonly resources: readonly string[]
+  readonly source?: { readonly type: "tool"; readonly messageID: string; readonly id: string }
+}
+
 export interface PermissionDomain {
   hook(name: "evaluate", callback: (event: PermissionEvaluationEvent) => void | Promise<void>): Promise<Registration>
-  get(input: { sessionID: string; requestID: string }): Promise<{ data: PermissionRequestInfo }>
+  /** Resolves to the pending request itself (the client unwraps the response body). */
+  get(input: { sessionID: string; requestID: string }): Promise<PermissionRequestInfo>
+  /** Evaluates permission rules and prompts the user when needed; rejects when denied. */
+  assert(input: PermissionAssertInput): Promise<void>
 }
 
 export type ToolExecuteAfterEvent = {
@@ -131,11 +155,19 @@ export interface ToolResult {
   readonly metadata?: Record<string, unknown>
 }
 
+export interface ToolExecutionContext {
+  readonly signal: AbortSignal
+  readonly sessionID: string
+  readonly agent: string
+  readonly messageID: string
+  readonly id: string
+}
+
 export interface ToolDefinition {
   readonly name: string
   readonly description: string
   readonly input: Record<string, unknown>
-  readonly execute: (input: unknown, context: { signal: AbortSignal }) => Promise<ToolResult>
+  readonly execute: (input: unknown, context: ToolExecutionContext) => Promise<ToolResult>
 }
 
 export interface ToolEditor {
@@ -153,7 +185,20 @@ export interface OpenCodeEvent {
 }
 
 export interface EventDomain {
-  subscribe(options?: { types?: string[]; signal?: AbortSignal }): AsyncIterable<OpenCodeEvent>
+  subscribe(options?: { types?: readonly "permission.replied"[]; signal?: AbortSignal }): AsyncIterable<OpenCodeEvent>
+}
+
+/** The fields of a model entry (`ctx.model.list()`) the plugin reads. */
+export interface ModelInfoSummary {
+  readonly id: string
+  readonly modelID?: string
+  readonly providerID: string
+  readonly limit?: { readonly output?: number }
+  readonly variants?: ReadonlyArray<{ readonly id: string }>
+}
+
+export interface ModelDomain {
+  list(): Promise<{ readonly data: readonly ModelInfoSummary[] }>
 }
 
 export interface OpenCodePluginContext {
@@ -163,6 +208,7 @@ export interface OpenCodePluginContext {
   readonly permission: PermissionDomain
   readonly tool: ToolDomain
   readonly event: EventDomain
+  readonly model: ModelDomain
 }
 
 export interface OpenCodePluginDefinition {

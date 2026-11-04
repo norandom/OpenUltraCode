@@ -11,9 +11,18 @@ export interface HighEffortApplyResult {
  */
 export type ChatParams = Record<string, unknown>
 
+/** What the selected model allows, when opencode knows it. */
+export interface ModelLimits {
+  /** Maximum output tokens of the model (`limit.output`). */
+  readonly outputTokens?: number
+  /** Variant IDs the model offers, for example "high", "xhigh", or "max". */
+  readonly variants?: readonly string[]
+}
+
 export function applyHighEffortRequestBehavior(
   options: HighEffortOptions,
-  params: ChatParams
+  params: ChatParams,
+  limits: ModelLimits = {}
 ): HighEffortApplyResult {
   if (!options.enabled) {
     return { appliedFields: [] }
@@ -22,12 +31,13 @@ export function applyHighEffortRequestBehavior(
   const appliedFields: string[] = []
 
   if (options.outputTokens !== undefined) {
-    params.maxTokens =
-      typeof params.maxTokens === "number" ? Math.max(params.maxTokens, options.outputTokens) : options.outputTokens
+    const requested = typeof params.maxTokens === "number" ? Math.max(params.maxTokens, options.outputTokens) : options.outputTokens
+    // Never ask for more output than the model supports; providers reject such requests.
+    params.maxTokens = limits.outputTokens !== undefined && limits.outputTokens > 0 ? Math.min(requested, limits.outputTokens) : requested
     appliedFields.push("maxTokens")
   }
 
-  const requested = toProviderReasoningEffort(options.effort)
+  const requested = toProviderReasoningEffort(options.effort, limits.variants)
   params.reasoningEffort =
     typeof params.reasoningEffort === "string" ? strongestReasoningEffort(params.reasoningEffort, requested) : requested
   appliedFields.push("reasoningEffort")
@@ -35,11 +45,14 @@ export function applyHighEffortRequestBehavior(
   return { appliedFields }
 }
 
-function toProviderReasoningEffort(effort: HighEffortLevel): "medium" | "high" {
-  return effort === "medium" ? "medium" : "high"
+/** "xhigh" is only sent to models that offer an xhigh or max variant; others get "high". */
+function toProviderReasoningEffort(effort: HighEffortLevel, variants: readonly string[] | undefined): "medium" | "high" | "xhigh" {
+  if (effort === "medium") return "medium"
+  if (effort === "xhigh" && variants !== undefined && (variants.includes("xhigh") || variants.includes("max"))) return "xhigh"
+  return "high"
 }
 
-function strongestReasoningEffort(current: string, requested: "medium" | "high"): string {
+function strongestReasoningEffort(current: string, requested: "medium" | "high" | "xhigh"): string {
   const strength: Readonly<Record<string, number>> = {
     none: 0,
     minimal: 1,

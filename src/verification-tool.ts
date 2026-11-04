@@ -63,27 +63,20 @@ export function createCompletionReportTool(
     description: "Produce and persist an OpenUltraCode completion report using the runtime verification gate.",
     async execute(input: unknown): Promise<CompletionReport> {
       const researchOnly = isRecord(input) && input.researchOnly === true
-      const loaded = await stateStore.load()
-      if (loaded.state === undefined) {
-        return evaluateCompletionGate({
+      let report: CompletionReport | undefined
+      await stateStore.mutate((state) => {
+        report = evaluateCompletionGate({
           policy: config.verificationGate,
-          criteria: [],
-          evidence: [],
-          researchOnly
+          criteria: state.criteria,
+          evidence: state.verification,
+          assumptions: state.assumptions,
+          findingIds: state.findings.map((finding) => finding.id),
+          researchOnly: researchOnly || state.mode === "adversarial-research" || state.mode === "spec-audit"
         })
-      }
-
-      const report = evaluateCompletionGate({
-        policy: config.verificationGate,
-        criteria: loaded.state.criteria,
-        evidence: loaded.state.verification,
-        assumptions: loaded.state.assumptions,
-        findingIds: loaded.state.findings.map((finding) => finding.id),
-        researchOnly: researchOnly || loaded.state.mode === "adversarial-research" || loaded.state.mode === "spec-audit"
+        return withUpdatedState(state, { completion: report })
       })
-      await stateStore.update(withUpdatedState(loaded.state, { completion: report }))
 
-      return report
+      return report ?? evaluateCompletionGate({ policy: config.verificationGate, criteria: [], evidence: [], researchOnly })
     }
   }
 }
@@ -92,12 +85,10 @@ async function appendEvidence(
   stateStore: WorkflowStateStore,
   evidence: VerificationEvidence
 ): Promise<RecordVerificationToolResult> {
-  const loaded = await stateStore.load()
-  if (loaded.state === undefined) {
+  const updated = await stateStore.mutate((state) => withUpdatedState(state, { verification: [...state.verification, evidence] }))
+  if (updated === undefined) {
     return { recorded: false, reason: "No active OpenUltraCode workflow state was found." }
   }
-
-  await stateStore.update(withUpdatedState(loaded.state, { verification: [...loaded.state.verification, evidence] }))
 
   return { recorded: true, evidenceId: evidence.id }
 }

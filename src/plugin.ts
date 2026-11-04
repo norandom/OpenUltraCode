@@ -19,9 +19,11 @@ export const OpenUltraCodePlugin: OpenCodePluginDefinition = {
       throw new Error(`Invalid OpenUltraCode plugin options: ${parsed.errors.join("; ")}`)
     }
 
-    const stateStore = createWorkflowStateStore(ctx.location.directory, parsed.value)
+    // State and fusion agents belong to the project, even when opencode runs in a subdirectory.
+    const projectDirectory = ctx.location.project.directory
+    const stateStore = createWorkflowStateStore(projectDirectory, parsed.value)
 
-    return registerOpenUltraCode(ctx, parsed.value, stateStore)
+    return registerOpenUltraCode(ctx, parsed.value, stateStore, projectDirectory)
   }
 }
 

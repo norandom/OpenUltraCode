@@ -82,6 +82,25 @@ export function createFailedPhaseNotice(input: FailedPhaseNoticeInput): Degradat
   })
 }
 
+export interface ToolErrorNoticeInput extends NoticeContext {
+  readonly tool: string
+  readonly phase: WorkflowPhase
+}
+
+/** An ordinary tool error (a failed search, read, or MCP call): worth noting, not a workflow gate. */
+export function createToolErrorNotice(input: ToolErrorNoticeInput): DegradationNotice {
+  return createNotice({
+    id: `tool-error-${slugify(input.tool)}`,
+    capability: `tool ${input.tool}`,
+    severity: "warning",
+    reason: input.reason,
+    userVisibleMessage: `${input.tool} failed during ${input.phase}: ${input.reason}.`,
+    safeNextAction: `Check whether the ${input.tool} failure affects the result; record a blocked check if required evidence could not be produced.`,
+    occurredAt: input.occurredAt,
+    phase: input.phase
+  })
+}
+
 export function createPermissionDeniedNotice(input: PermissionDeniedNoticeInput): DegradationNotice {
   return createNotice({
     id: `permission-denied-${slugify(input.operation)}`,

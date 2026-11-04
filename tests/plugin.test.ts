@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, it } from "node:test"
@@ -28,9 +28,11 @@ interface FakeContext extends OpenCodePluginContext {
   readonly events: Array<{ type: string; data: Record<string, unknown> }>
   readonly emit: (event: { type: string; data: Record<string, unknown> }) => void
   readonly permissionRequests: Map<string, { action: string; resources: readonly string[]; message?: string }>
+  readonly permissionAsserts: Array<{ action: string; resources: readonly string[] }>
+  denyPermissionAsserts: boolean
 }
 
-function createFakeContext(directory: string, options: unknown): FakeContext {
+function createFakeContext(directory: string, options: unknown, sessionDirectory = directory): FakeContext {
   const sessionHooks = new Map<string, (event: never) => unknown>()
   const permissionHooks: Array<(event: never) => unknown> = []
   const toolHooks = new Map<string, (event: never) => unknown>()
@@ -38,9 +40,10 @@ function createFakeContext(directory: string, options: unknown): FakeContext {
   const events: Array<{ type: string; data: Record<string, unknown> }> = []
   const listeners: Array<(event: { type: string; data: Record<string, unknown> }) => void> = []
   const permissionRequests = new Map<string, { action: string; resources: readonly string[]; message?: string }>()
+  const permissionAsserts: Array<{ action: string; resources: readonly string[] }> = []
 
   const ctx: FakeContext = {
-    location: { directory },
+    location: { directory: sessionDirectory, project: { directory } },
     options,
     sessionHooks,
     permissionHooks,
@@ -48,6 +51,8 @@ function createFakeContext(directory: string, options: unknown): FakeContext {
     toolDefinitions,
     events,
     permissionRequests,
+    permissionAsserts,
+    denyPermissionAsserts: false,
     emit(event) {
       events.push(event)
       for (const listener of listeners) listener(event)
@@ -68,7 +73,12 @@ function createFakeContext(directory: string, options: unknown): FakeContext {
         if (request === undefined) {
           return Promise.reject(new Error("unknown permission request"))
         }
-        return Promise.resolve({ data: request })
+        // The real client unwraps the response body and resolves to the request itself.
+        return Promise.resolve(request)
+      },
+      assert(input: { action: string; resources: readonly string[] }) {
+        permissionAsserts.push({ action: input.action, resources: input.resources })
+        return ctx.denyPermissionAsserts ? Promise.reject(new Error("permission denied by the user")) : Promise.resolve()
       }
     } as unknown as OpenCodePluginContext["permission"],
     tool: {
@@ -114,16 +124,33 @@ function createFakeContext(directory: string, options: unknown): FakeContext {
           }
         }
       }
-    } as unknown as OpenCodePluginContext["event"]
+    } as unknown as OpenCodePluginContext["event"],
+    model: {
+      list() {
+        return Promise.resolve({
+          data: [
+            { id: "small-model", providerID: "acme", limit: { output: 8192 }, variants: [{ id: "high" }] },
+            { id: "mistral-large-4", providerID: "mistral", limit: { output: 262144 }, variants: [{ id: "high" }, { id: "max" }] }
+          ]
+        })
+      }
+    }
   }
 
   return ctx
 }
 
-async function setupPlugin(directory: string, options: unknown): Promise<FakeContext> {
-  const ctx = createFakeContext(directory, options)
+async function setupPlugin(directory: string, options: unknown, sessionDirectory = directory): Promise<FakeContext> {
+  const ctx = createFakeContext(directory, options, sessionDirectory)
   await OpenUltraCodePlugin.setup(ctx)
   return ctx
+}
+
+const toolContext = {
+  sessionID: "session-1",
+  agent: "build",
+  messageID: "msg_1",
+  id: "call_1"
 }
 
 async function createProjectRoot(): Promise<string> {
@@ -156,7 +183,7 @@ function getTool(ctx: FakeContext, name: string): ToolDefinition {
 
 async function executeTool(ctx: FakeContext, name: string, input: unknown): Promise<unknown> {
   const tool = getTool(ctx, name)
-  const result = await tool.execute(input, { signal: new AbortController().signal })
+  const result = await tool.execute(input, { ...toolContext, signal: new AbortController().signal })
   if (typeof result.content !== "string") {
     throw new TypeError(`tool ${name} did not return text content`)
   }
@@ -186,6 +213,7 @@ describe("OpenUltraCode OpenCode 2 plugin entry point", () => {
         "open_ultracode_completion_report",
         "open_ultracode_configure_fusion",
         "open_ultracode_record_blocked_check",
+        "open_ultracode_record_intake",
         "open_ultracode_record_verification",
         "open_ultracode_status"
       ]
@@ -198,12 +226,15 @@ describe("OpenUltraCode OpenCode 2 plugin entry point", () => {
     await store.update(createState())
     const ctx = await setupPlugin(projectRoot, { enabled: true })
 
-    const event = { messages: [] } as unknown as SessionCompactionEvent
+    const event = { system: [], messages: [] } as unknown as SessionCompactionEvent
+    await getSessionHook(ctx, "compaction")(event as never)
     await getSessionHook(ctx, "compaction")(event as never)
 
-    const injected = event.messages.at(-1)
-    assert.equal(injected?.role, "user")
-    const text = injected?.content.map((part) => part.text ?? "").join("\n") ?? ""
+    // Continuity goes into one plain system part; the transcript itself is left untouched.
+    assert.deepEqual(event.messages, [])
+    assert.equal(event.system.length, 1, "a repeated compaction hook must not duplicate the context")
+    assert.equal(event.system[0]?.type, "text")
+    const text = event.system[0]?.text ?? ""
     assert.match(text, /OpenUltraCode workflow continuity/i)
     assert.match(text, /Mode: build/)
     assert.match(text, /Phase: verification/)
@@ -238,10 +269,10 @@ describe("OpenUltraCode OpenCode 2 plugin entry point", () => {
     )
     const ctx = await setupPlugin(projectRoot, { enabled: true })
 
-    const event = { messages: [] } as unknown as SessionCompactionEvent
+    const event = { system: [], messages: [] } as unknown as SessionCompactionEvent
     await getSessionHook(ctx, "compaction")(event as never)
 
-    const text = event.messages.map((message) => message.content.map((part) => part.text ?? "").join("")).join("\n")
+    const text = event.system.map((part) => part.text).join("\n")
     assert.doesNotMatch(text, /claude-opus-4/)
     assert.doesNotMatch(text, /anthropic/)
     assert.doesNotMatch(text, /secret transcript text/)
@@ -256,10 +287,10 @@ describe("OpenUltraCode OpenCode 2 plugin entry point", () => {
     await writeFile(join(projectRoot, stateFile), "not json", "utf8")
     const ctx = await setupPlugin(projectRoot, { enabled: true })
 
-    const event = { messages: [] } as unknown as SessionCompactionEvent
+    const event = { system: [], messages: [] } as unknown as SessionCompactionEvent
     await getSessionHook(ctx, "compaction")(event as never)
 
-    const text = event.messages.map((message) => message.content.map((part) => part.text ?? "").join("")).join("\n")
+    const text = event.system.map((part) => part.text).join("\n")
     assert.match(text, /OpenUltraCode workflow continuity/i)
     assert.match(text, /Degradation notices:/)
     assert.match(text, /workflow state persistence/)
@@ -294,8 +325,25 @@ describe("OpenUltraCode OpenCode 2 plugin entry point", () => {
 
     await getSessionHook(ctx, "context")(event as never)
 
+    // mistral-large-4 allows 262144 output tokens and offers a max variant, so xhigh is sent as is.
     assert.equal(event.options.maxTokens, 128000)
-    assert.equal(event.options.reasoningEffort, "high")
+    assert.equal(event.options.reasoningEffort, "xhigh")
+  })
+
+  it("clamps high-effort output tokens and effort to what the selected model supports", async () => {
+    const ctx = await setupPlugin(await createProjectRoot(), {
+      enabled: true,
+      highEffort: { enabled: true, effort: "xhigh", outputTokens: 128000 }
+    })
+    const small = { options: {}, model: { providerID: "acme", id: "small-model" } } as unknown as SessionContextEvent
+    const unknown = { options: {}, model: { providerID: "acme", id: "not-listed" } } as unknown as SessionContextEvent
+
+    await getSessionHook(ctx, "context")(small as never)
+    await getSessionHook(ctx, "context")(unknown as never)
+
+    assert.deepEqual(small.options, { maxTokens: 8192, reasoningEffort: "high" })
+    // Without model information the configured values apply, with the provider-safe "high".
+    assert.deepEqual(unknown.options, { maxTokens: 128000, reasoningEffort: "high" })
   })
 
   it("does not mutate request options when high-effort mode is disabled", async () => {
@@ -357,14 +405,38 @@ describe("OpenUltraCode OpenCode 2 plugin entry point", () => {
     assert.deepEqual(status.degradations, ["D-1", "permission-denied-shell-npm-test"])
   })
 
-  it("records tool failures as blocked workflow status with affected phase", async () => {
+  it("notes ordinary tool errors without blocking the workflow", async () => {
+    const projectRoot = await createProjectRoot()
+    const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
+    await store.update({ ...createState(), phase: "execution" })
+    const ctx = await setupPlugin(projectRoot, { enabled: true })
+
+    await getToolHook(ctx, "execute.after")({
+      tool: "grep",
+      status: "error",
+      error: { message: "no matches" }
+    } as unknown as ToolExecuteAfterEvent as never)
+    const status = await executeTool(ctx, "open_ultracode_status", {}) as { phase: string; degradationDetails: Array<Record<string, unknown>> }
+
+    assert.equal(status.phase, "execution")
+    assert.deepEqual(status.degradationDetails.at(-1), {
+      id: "tool-error-grep",
+      capability: "tool grep",
+      severity: "warning",
+      reason: "no matches",
+      safeNextAction: "Check whether the grep failure affects the result; record a blocked check if required evidence could not be produced.",
+      phase: "execution"
+    })
+  })
+
+  it("records failures of the workflow's own tools as blocked workflow status with affected phase", async () => {
     const projectRoot = await createProjectRoot()
     const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
     await store.update({ ...createState(), phase: "verification" })
     const ctx = await setupPlugin(projectRoot, { enabled: true })
 
     await getToolHook(ctx, "execute.after")({
-      tool: "bash",
+      tool: "open_ultracode_record_verification",
       sessionID: "session-1",
       agent: "build",
       messageID: "msg_1",
@@ -381,7 +453,7 @@ describe("OpenUltraCode OpenCode 2 plugin entry point", () => {
       id: "phase-verification-failed",
       capability: "workflow phase verification",
       severity: "blocked",
-      reason: "bash failed: npm test failed",
+      reason: "open_ultracode_record_verification failed: npm test failed",
       safeNextAction:
         "Stop the workflow at verification, fix or explicitly accept the issue, then rerun the phase before reporting completion.",
       phase: "verification"
@@ -535,8 +607,11 @@ describe("OpenUltraCode OpenCode 2 plugin entry point", () => {
     await store.update(createGateState("fail"))
     assert.equal((await executeTool(ctx, "open_ultracode_completion_report", {}) as { status: string }).status, "failed")
 
-    const researchCtx = await setupPlugin(projectRoot, { enabled: true, verificationGate: "disabled" })
-    await store.update({ ...createGateState("pass"), mode: "adversarial-research", criteria: [], verification: [] })
+    // A second plugin instance for the same project is ignored, so research mode uses its own project.
+    const researchRoot = await createProjectRoot()
+    const researchStore = createWorkflowStateStore(researchRoot, { state: { directory: stateDirectory } })
+    const researchCtx = await setupPlugin(researchRoot, { enabled: true, verificationGate: "disabled" })
+    await researchStore.update({ ...createGateState("pass"), mode: "adversarial-research", criteria: [], verification: [] })
     assert.equal((await executeTool(researchCtx, "open_ultracode_completion_report", { researchOnly: true }) as { status: string }).status, "research-only")
   })
 
@@ -684,3 +759,172 @@ function createState(): WorkflowState {
     }
   }
 }
+
+describe("OpenUltraCode workflow lifecycle in OpenCode 2", () => {
+  async function commandPrompt(command: string, task: string): Promise<SessionPromptEvent> {
+    const template = await readFile(join(process.cwd(), ".opencode", "commands", command), "utf8")
+    const text = template.replace(/^---[\s\S]*?---\r?\n/u, "").replaceAll("$ARGUMENTS", task)
+    return { sessionID: "session-1", messageID: "msg_1", delivery: "queue", prompt: { text } } as unknown as SessionPromptEvent
+  }
+
+  it("starts a workflow from a real command and completes it through the tools, without pre-seeded state", async () => {
+    const ctx = await setupPlugin(await createProjectRoot(), { enabled: true, verificationGate: "strict" })
+    assert.equal((await executeTool(ctx, "open_ultracode_status", {}) as { active: boolean }).active, false)
+
+    await getSessionHook(ctx, "prompt")(await commandPrompt("ultracode.md", "Add a --dry-run flag") as never)
+    const started = await executeTool(ctx, "open_ultracode_status", {}) as { active: boolean; mode: string; phase: string; goal: string }
+    assert.deepEqual([started.active, started.mode, started.phase, started.goal], [true, "build", "intake", "Add a --dry-run flag"])
+
+    const intake = await executeTool(ctx, "open_ultracode_record_intake", {
+      criteria: [{ id: "AC-1", text: "--dry-run prints the plan and changes nothing" }],
+      phase: "verification"
+    }) as { recorded: boolean; phase: string; criteriaIds: string[] }
+    assert.deepEqual(intake, { recorded: true, phase: "verification", criteriaIds: ["AC-1"] })
+
+    const recorded = await executeTool(ctx, "open_ultracode_record_verification", {
+      id: "VE-1", kind: "test", result: "pass", summary: "dry-run test passes", criteriaIds: ["AC-1"], command: "pnpm test"
+    }) as { recorded: boolean }
+    assert.equal(recorded.recorded, true)
+    assert.equal((await executeTool(ctx, "open_ultracode_completion_report", {}) as { status: string }).status, "verified")
+  })
+
+  it("announces every command mode once, including ultrathink, and ignores bare mode lines", async () => {
+    const ctx = await setupPlugin(await createProjectRoot(), { enabled: true })
+    const event = await commandPrompt("ultrathink.md", "Why is the cache cold?")
+
+    await getSessionHook(ctx, "prompt")(event as never)
+    await getSessionHook(ctx, "prompt")(event as never)
+
+    assert.equal(event.prompt.text.split("OpenUltraCode mode active: ultrathink.").length - 1, 1)
+    assert.equal((await executeTool(ctx, "open_ultracode_status", {}) as { mode: string }).mode, "adversarial-research")
+
+    const bare = { sessionID: "session-1", prompt: { text: "Workflow mode: debug" } } as unknown as SessionPromptEvent
+    await getSessionHook(ctx, "prompt")(bare as never)
+    assert.equal(bare.prompt.text, "Workflow mode: debug")
+  })
+
+  it("keeps an unfinished workflow for follow-up prompts and starts fresh for another session", async () => {
+    const ctx = await setupPlugin(await createProjectRoot(), { enabled: true })
+    await getSessionHook(ctx, "prompt")(await commandPrompt("ultracode-debug.md", "first") as never)
+    await executeTool(ctx, "open_ultracode_record_intake", { constraints: ["no network"] })
+
+    await getSessionHook(ctx, "prompt")(await commandPrompt("ultracode-debug.md", "follow-up") as never)
+    assert.equal((await executeTool(ctx, "open_ultracode_status", {}) as { goal: string }).goal, "first")
+
+    const other = await commandPrompt("ultracode-debug.md", "other session")
+    await getSessionHook(ctx, "prompt")({ ...other, sessionID: "session-2" } as never)
+    assert.equal((await executeTool(ctx, "open_ultracode_status", {}) as { goal: string }).goal, "other session")
+  })
+
+  it("stores state in the project root when opencode runs in a subdirectory", async () => {
+    const projectRoot = await createProjectRoot()
+    const subdirectory = join(projectRoot, "packages", "app")
+    await mkdir(subdirectory, { recursive: true })
+    const ctx = await setupPlugin(projectRoot, { enabled: true }, subdirectory)
+
+    await getSessionHook(ctx, "prompt")(await commandPrompt("ultracode.md", "task") as never)
+
+    const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
+    assert.equal((await store.load()).state?.goal, "task")
+  })
+
+  it("ignores a second plugin instance for the same project", async () => {
+    const projectRoot = await createProjectRoot()
+    await setupPlugin(projectRoot, { enabled: true })
+    const duplicate = await setupPlugin(projectRoot, { enabled: true })
+
+    assert.equal(duplicate.sessionHooks.size, 0)
+    assert.equal(duplicate.toolDefinitions.length, 0)
+  })
+
+  it("never fails the host operation when the plugin itself fails", async () => {
+    const projectRoot = await createProjectRoot()
+    // A regular file where the state directory belongs makes every state read fail.
+    await mkdir(join(projectRoot, ".opencode"), { recursive: true })
+    await writeFile(join(projectRoot, ".opencode", "open-ultracode"), "not a directory")
+    const ctx = await setupPlugin(projectRoot, { enabled: true })
+    const originalError = console.error
+    const logged: string[] = []
+    console.error = (message: unknown) => { logged.push(String(message)) }
+    try {
+      await assert.doesNotReject(async () => getSessionHook(ctx, "compaction")({ system: [], messages: [] } as never))
+      await assert.doesNotReject(async () => getSessionHook(ctx, "prompt")(await commandPrompt("ultracode.md", "x") as never))
+      await assert.doesNotReject(async () => getToolHook(ctx, "execute.after")({ tool: "bash", status: "error", error: { message: "boom" } } as never))
+    } finally {
+      console.error = originalError
+    }
+    // Which hooks fail depends on the platform (Windows reports ENOENT where POSIX reports ENOTDIR).
+    assert.ok(logged.length >= 1 && logged.every((line) => line.startsWith("OpenUltraCode: ")), logged.join("\n"))
+  })
+
+  it("does not lose evidence when verification is recorded concurrently", async () => {
+    const projectRoot = await createProjectRoot()
+    const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
+    await store.update({ ...createState(), verification: [] })
+    const ctx = await setupPlugin(projectRoot, { enabled: true })
+
+    await Promise.all(Array.from({ length: 12 }, (_, index) => executeTool(ctx, "open_ultracode_record_verification", {
+      id: `VE-${index}`, kind: "test", result: "pass", summary: `check ${index}`, criteriaIds: ["AC-1"]
+    })))
+
+    assert.equal((await store.load()).state?.verification.length, 12)
+  })
+
+  it("only blocks on denied tool calls, not on rules evaluated for agent tool lists", async () => {
+    const projectRoot = await createProjectRoot()
+    const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
+    await store.update({ ...createState(), phase: "execution" })
+    const ctx = await setupPlugin(projectRoot, { enabled: true })
+
+    await ctx.permissionHooks[0]?.({ sessionID: "s", action: "open_ultracode_configure_fusion", resources: [], effect: "deny", source: { type: "agent" } } as never)
+    assert.equal((await store.load()).state?.phase, "execution")
+
+    await ctx.permissionHooks[0]?.({ sessionID: "s", action: "bash", resources: ["rm"], effect: "deny", source: { type: "tool", messageID: "m", id: "c" } } as never)
+    assert.equal((await store.load()).state?.phase, "blocked")
+  })
+
+  it("asks for permission before rewriting fusion agents and stops when denied", async () => {
+    const projectRoot = await createProjectRoot()
+    const agents = join(projectRoot, ".opencode", "agents")
+    await mkdir(agents, { recursive: true })
+    for (const name of ["ultracode-fusion-panel-a.md", "ultracode-fusion-panel-b.md", "ultracode-fusion-arbiter.md"]) {
+      await writeFile(join(agents, name), await readFile(join(process.cwd(), ".opencode", "agents", name), "utf8"))
+    }
+    const ctx = await setupPlugin(projectRoot, { enabled: true })
+    const panelA = join(agents, "ultracode-fusion-panel-a.md")
+
+    await executeTool(ctx, "open_ultracode_configure_fusion", {})
+    assert.equal(ctx.permissionAsserts.length, 0, "reading the configuration must not prompt")
+
+    ctx.denyPermissionAsserts = true
+    const before = await readFile(panelA, "utf8")
+    await assert.rejects(() => executeTool(ctx, "open_ultracode_configure_fusion", { panelA: "openai/gpt-x" }), /denied/u)
+    assert.equal(await readFile(panelA, "utf8"), before, "a denied update must not touch agent files")
+
+    ctx.denyPermissionAsserts = false
+    await executeTool(ctx, "open_ultracode_configure_fusion", { panelA: "openai/gpt-x" })
+    assert.deepEqual(ctx.permissionAsserts.map((request) => request.action), ["open_ultracode_configure_fusion", "open_ultracode_configure_fusion"])
+    assert.match(await readFile(panelA, "utf8"), /^model: openai\/gpt-x$/mu)
+  })
+
+  it("advertises exactly the fields its validators require", async () => {
+    const projectRoot = await createProjectRoot()
+    const store = createWorkflowStateStore(projectRoot, { state: { directory: stateDirectory } })
+    await store.update(createState())
+    const ctx = await setupPlugin(projectRoot, { enabled: true })
+    const valid: Record<string, Record<string, unknown>> = {
+      open_ultracode_record_verification: { id: "VE-9", kind: "test", result: "fail", summary: "s", criteriaIds: [], reason: "r", residualRisk: "x" },
+      open_ultracode_record_blocked_check: { id: "VE-10", kind: "audit", summary: "s", criteriaIds: [], reason: "r", residualRisk: "x" }
+    }
+
+    for (const [name, input] of Object.entries(valid)) {
+      const required = (getTool(ctx, name).input as { required: string[] }).required
+      await executeTool(ctx, name, input)
+      for (const key of required.filter((field) => field !== "criteriaIds")) {
+        const { [key]: _omitted, ...missing } = input
+        await assert.rejects(() => executeTool(ctx, name, missing), TypeError, `${name} accepted input without required ${key}`)
+      }
+    }
+    assert.ok((getTool(ctx, "open_ultracode_record_verification").input as { required: string[] }).required.includes("result"))
+  })
+})

@@ -1,10 +1,11 @@
 import {
   createFailedPhaseNotice,
-  createPermissionDeniedNotice
+  createPermissionDeniedNotice,
+  createToolErrorNotice
 } from "./degradation.js"
 import type { DegradationNotice, Finding, OpenUltraCodeOptions, VerificationEvidence, WorkflowState } from "./types.js"
 import type { WorkflowStateStore } from "./state.js"
-import { applyHighEffortRequestBehavior } from "./high-effort.js"
+import { applyHighEffortRequestBehavior, type ModelLimits } from "./high-effort.js"
 import { configureFusionModels, fusionModelReferencePattern } from "./fusion-config-tool.js"
 import { createWorkflowStatusTool } from "./status-tool.js"
 import {
@@ -12,74 +13,152 @@ import {
   createRecordBlockedCheckTool,
   createRecordVerificationTool
 } from "./verification-tool.js"
+import { createRecordIntakeTool, readWorkflowCommand, recordIntakeInputSchema, startWorkflow } from "./workflow.js"
 import type {
+  ModelInfoSummary,
+  ModelRef,
   OpenCodePluginContext,
   SessionCompactionEvent,
   SessionPromptEvent,
   ToolDefinition,
-  ToolExecuteAfterEvent
+  ToolExecuteAfterEvent,
+  ToolExecutionContext
 } from "./opencode-v2.js"
 
+export const fusionPermissionAction = "open_ultracode_configure_fusion"
+const activationMarker = "OpenUltraCode mode active:"
+const continuityHeading = "OpenUltraCode workflow continuity"
+
+// OpenCode can load the same plugin more than once in one process (a global entry plus a
+// project entry). Hooks must run once per project, or prompts and compactions get duplicated.
+const activeProjects: Set<string> = ((globalThis as Record<symbol, unknown>)[Symbol.for("open-ultracode.active-projects")] ??= new Set<string>()) as Set<string>
+
 /**
- * Registers OpenUltraCode on the OpenCode 2 plugin context. Returns a cleanup
- * function that aborts the event subscription when the plugin unloads.
+ * Registers OpenUltraCode on the OpenCode 2 plugin context and returns a cleanup function.
+ * Every registration is awaited so failures surface when the plugin loads, and every hook
+ * callback is guarded: a plugin bug is logged instead of failing the user's prompt, tool
+ * call, permission check, or compaction.
  */
-export function registerOpenUltraCode(
+export async function registerOpenUltraCode(
   ctx: OpenCodePluginContext,
   config: OpenUltraCodeOptions,
-  stateStore: WorkflowStateStore
-): () => void {
+  stateStore: WorkflowStateStore,
+  projectDirectory: string
+): Promise<() => void> {
   if (!config.enabled) {
     return () => {}
   }
+  if (activeProjects.has(projectDirectory)) {
+    console.warn(`OpenUltraCode: already active for ${projectDirectory}; skipping a duplicate plugin entry.`)
+    return () => {}
+  }
+  activeProjects.add(projectDirectory)
 
-  void ctx.session.hook("context", (event) => {
-    applyHighEffortRequestBehavior(config.highEffort, event.options)
+  const controller = new AbortController()
+  const modelLimits = createModelLimitsLookup(ctx)
+  const registrations = await Promise.all([
+    ctx.session.hook("context", guarded("context hook", async (event) => {
+      applyHighEffortRequestBehavior(config.highEffort, event.options, await modelLimits(event.model))
+    })),
+    ctx.session.hook("prompt", guarded("prompt hook", async (event: SessionPromptEvent) => {
+      await activateWorkflow(stateStore, event)
+    })),
+    ctx.session.hook("compaction", guarded("compaction hook", async (event) => {
+      await injectCompactionContext(stateStore, event)
+    })),
+    ctx.permission.hook("evaluate", guarded("permission hook", async (event) => {
+      // Only denials of real tool calls block the workflow; rules evaluated while building an
+      // agent's tool list (for example fusion agents denying the configure tool) do not.
+      if (event.effect !== "deny" || (event.source !== undefined && event.source.type !== "tool")) {
+        return
+      }
+      const operation = event.resources.length > 0 ? `${event.action} ${event.resources.join(" ")}` : event.action
+      await blockFromPermission(stateStore, operation, event.message ?? "permission was denied by opencode rules")
+    })),
+    ctx.tool.hook("execute.after", guarded("tool hook", async (event) => {
+      await observeToolExecution(stateStore, event)
+    })),
+    ctx.tool.transform((editor) => {
+      for (const tool of createTools(ctx, config, stateStore, projectDirectory)) editor.add(tool)
+    })
+  ])
+
+  void observePermissionReplies(ctx, stateStore, controller.signal).catch((error: unknown) => {
+    if (!controller.signal.aborted) logFailure("permission reply listener", error)
   })
 
-  void ctx.session.hook("prompt", (event) => {
-    announceActivation(event)
-  })
+  return () => {
+    controller.abort()
+    activeProjects.delete(projectDirectory)
+    for (const registration of registrations) void registration.dispose().catch(() => {})
+  }
+}
 
-  void ctx.session.hook("compaction", async (event) => {
-    await injectCompactionContext(stateStore, event)
-  })
+const modelListTtlMs = 60_000
 
-  void ctx.permission.hook("evaluate", async (event) => {
-    if (event.effect !== "deny") {
-      return
+/**
+ * Looks up the selected model's output limit and variants from opencode's model list, cached
+ * for a minute. Unknown models or a failing lookup yield no limits, so the configured values apply.
+ */
+function createModelLimitsLookup(ctx: OpenCodePluginContext): (model: ModelRef | undefined) => Promise<ModelLimits> {
+  let cache: { readonly models: readonly ModelInfoSummary[]; readonly loadedAt: number } | undefined
+  return async (model) => {
+    if (model === undefined) return {}
+    try {
+      if (cache === undefined || Date.now() - cache.loadedAt > modelListTtlMs) {
+        cache = { models: (await ctx.model.list()).data, loadedAt: Date.now() }
+      }
+    } catch (error) {
+      logFailure("model lookup", error)
+      return {}
     }
+    const info = cache.models.find((entry) => entry.providerID === model.providerID && (entry.id === model.id || entry.modelID === model.id))
+    if (info === undefined) return {}
+    return {
+      ...(info.limit?.output === undefined ? {} : { outputTokens: info.limit.output }),
+      ...(info.variants === undefined ? {} : { variants: info.variants.map((variant) => variant.id) })
+    }
+  }
+}
 
-    const operation = event.resources.length > 0 ? `${event.action} ${event.resources.join(" ")}` : event.action
-    await blockFromPermission(
-      stateStore,
-      operation,
-      event.resources,
-      event.message ?? "permission was denied by opencode rules"
-    )
-  })
+function guarded<T>(label: string, callback: (event: T) => void | Promise<void>): (event: T) => Promise<void> {
+  return async (event) => {
+    try {
+      await callback(event)
+    } catch (error) {
+      logFailure(label, error)
+    }
+  }
+}
 
-  void ctx.tool.hook("execute.after", async (event) => {
-    await observeToolExecution(stateStore, event)
-  })
+function logFailure(label: string, error: unknown): void {
+  console.error(`OpenUltraCode: ${label} failed: ${error instanceof Error ? error.message : String(error)}`)
+}
 
-  void ctx.tool.transform((editor) => {
-    editor.add(toToolDefinition("open_ultracode_status", createWorkflowStatusTool(config, stateStore), {
+function createTools(
+  ctx: OpenCodePluginContext,
+  config: OpenUltraCodeOptions,
+  stateStore: WorkflowStateStore,
+  projectDirectory: string
+): ToolDefinition[] {
+  return [
+    toToolDefinition("open_ultracode_status", createWorkflowStatusTool(config, stateStore), {
       type: "object",
       properties: {},
       additionalProperties: false
-    }))
-    editor.add(toToolDefinition("open_ultracode_record_verification", createRecordVerificationTool(stateStore), verificationInputSchema()))
-    editor.add(toToolDefinition("open_ultracode_record_blocked_check", createRecordBlockedCheckTool(stateStore), verificationInputSchema()))
-    editor.add(toToolDefinition("open_ultracode_completion_report", createCompletionReportTool(config, stateStore), {
+    }),
+    toToolDefinition("open_ultracode_record_intake", createRecordIntakeTool(stateStore), recordIntakeInputSchema()),
+    toToolDefinition("open_ultracode_record_verification", createRecordVerificationTool(stateStore), verificationInputSchema()),
+    toToolDefinition("open_ultracode_record_blocked_check", createRecordBlockedCheckTool(stateStore), blockedCheckInputSchema()),
+    toToolDefinition("open_ultracode_completion_report", createCompletionReportTool(config, stateStore), {
       type: "object",
       properties: {
         researchOnly: { type: "boolean", description: "Report research-only status instead of running the completion gate." }
       },
       additionalProperties: false
-    }))
-    editor.add({
-      name: "open_ultracode_configure_fusion",
+    }),
+    {
+      name: fusionPermissionAction,
       description:
         "Read or update the persistent OpenUltraCode fusion panel A, panel B, and decider model IDs. Every updated fusion role is configured for maximum reasoning.",
       input: {
@@ -91,16 +170,24 @@ export function registerOpenUltraCode(
         },
         additionalProperties: false
       },
-      execute: async (input: unknown) => ({
-        content: JSON.stringify(await configureFusionModels(ctx.location.directory, isRecord(input) ? input : {}), null, 2)
-      })
-    })
-  })
-
-  const controller = new AbortController()
-  void observePermissionReplies(ctx, stateStore, controller.signal)
-
-  return () => controller.abort()
+      execute: async (input: unknown, context: ToolExecutionContext) => {
+        const request = isRecord(input) ? input : {}
+        // Reading the configuration is free; rewriting agent files needs the user's approval.
+        // assert() prompts according to the session's rules and rejects when denied; the
+        // rejection must propagate so OpenCode ends the step instead of reporting success.
+        if (["panelA", "panelB", "decider"].some((key) => request[key] !== undefined)) {
+          await ctx.permission.assert({
+            sessionID: context.sessionID,
+            agent: context.agent,
+            action: fusionPermissionAction,
+            resources: [projectDirectory],
+            source: { type: "tool", messageID: context.messageID, id: context.id }
+          })
+        }
+        return { content: JSON.stringify(await configureFusionModels(projectDirectory, request), null, 2) }
+      }
+    }
+  ]
 }
 
 async function observePermissionReplies(
@@ -113,75 +200,61 @@ async function observePermissionReplies(
       continue
     }
 
-    const sessionID = typeof event.data.sessionID === "string" ? event.data.sessionID : "unknown session"
-    const requestID = typeof event.data.requestID === "string" ? event.data.requestID : "unknown request"
-    let operation = `permission request ${requestID}`
-    let reason = "permission was rejected by the user"
-
     try {
-      const request = await ctx.permission.get({ sessionID, requestID })
-      const action = request.data.action
-      const resources = request.data.resources.join(" ")
-      operation = resources.length > 0 ? `${action} ${resources}` : action
-      if (typeof request.data.message === "string" && request.data.message.length > 0) {
-        reason = request.data.message
+      await recordPermissionRejection(ctx, stateStore, event.data)
+    } catch (error) {
+      logFailure("permission reply handling", error)
+    }
+  }
+}
+
+async function recordPermissionRejection(
+  ctx: OpenCodePluginContext,
+  stateStore: WorkflowStateStore,
+  data: Record<string, unknown>
+): Promise<void> {
+  const requestID = typeof data.requestID === "string" ? data.requestID : undefined
+  let operation = `permission request ${requestID ?? "unknown"}`
+  let reason = "permission was rejected by the user"
+
+  if (typeof data.sessionID === "string" && requestID !== undefined) {
+    try {
+      const request = await ctx.permission.get({ sessionID: data.sessionID, requestID })
+      const resources = request.resources.join(" ")
+      operation = resources.length > 0 ? `${request.action} ${resources}` : request.action
+      if (typeof request.message === "string" && request.message.length > 0) {
+        reason = request.message
       }
     } catch {
-      // The pending request may already be gone; record the generic denial.
+      // The request may already be gone once it was answered; record the generic rejection.
     }
-
-    await blockFromPermission(stateStore, operation, [], reason)
   }
+
+  await blockFromPermission(stateStore, operation, reason)
 }
 
-function announceActivation(event: SessionPromptEvent): void {
-  const match = /Workflow mode:\s*([a-z-]+)/i.exec(event.prompt.text)
-  if (match === null) {
+/** Starts or continues the workflow for an OpenUltraCode command and marks the prompt once. */
+async function activateWorkflow(stateStore: WorkflowStateStore, event: SessionPromptEvent): Promise<void> {
+  const command = readWorkflowCommand(event.prompt.text)
+  if (command === undefined) {
     return
   }
 
-  const rawMode = match[1]
-  if (rawMode === undefined) {
-    return
+  await startWorkflow(stateStore, command, event.sessionID)
+
+  if (!event.prompt.text.includes(activationMarker)) {
+    // Put the marker into the admitted prompt so users and the model see it without a TUI hook.
+    event.prompt.text = `${event.prompt.text}\n\n${activationMarker} ${command.label}. The active selected opencode model is preserved. ` +
+      "Record intake with open_ultracode_record_intake, evidence with open_ultracode_record_verification, and finish with open_ultracode_completion_report."
   }
-
-  const mode = openUltraCodeCommandModes[rawMode.toLowerCase()]
-  if (mode === undefined) {
-    return
-  }
-
-  // Append the mode marker to the admitted prompt so users and the model see it
-  // without needing a provider or TUI hook.
-  event.prompt.text = `${event.prompt.text}\n\nOpenUltraCode mode active: ${mode}. The active selected opencode model is preserved; workflow status, degradation notices, and verification gates are available.`
-}
-
-const openUltraCodeCommandModes: Readonly<Record<string, string>> = {
-  comprehensive: "comprehensive",
-  debug: "debug",
-  "spec-audit": "spec-audit",
-  "adversarial-research": "adversarial-research",
-  verify: "verify",
-  "ultrathink-fusion": "ultrathink-fusion"
 }
 
 async function blockFromPermission(
   stateStore: WorkflowStateStore,
   operation: string,
-  _resources: readonly string[],
   reason: string
 ): Promise<void> {
-  const loaded = await stateStore.load()
-  if (loaded.state === undefined) {
-    return
-  }
-
-  const notice = createPermissionDeniedNotice({
-    operation,
-    reason,
-    phase: loaded.state.phase
-  })
-
-  await blockWorkflow(stateStore, loaded.state, notice)
+  await stateStore.mutate((state) => blockWorkflow(state, createPermissionDeniedNotice({ operation, reason, phase: state.phase })))
 }
 
 async function observeToolExecution(
@@ -192,30 +265,27 @@ async function observeToolExecution(
     return
   }
 
-  const loaded = await stateStore.load()
-  if (loaded.state === undefined) {
+  const reason = `${event.tool} failed: ${event.error.message}`
+  // Only failures of the workflow's own gate tools block it. Ordinary tool errors (a failed
+  // search, a missing file, an MCP hiccup) are part of normal work and are only noted.
+  if (event.tool.startsWith("open_ultracode_")) {
+    await stateStore.mutate((state) => blockWorkflow(state, createFailedPhaseNotice({ phase: state.phase, reason })))
     return
   }
-
-  const notice = createFailedPhaseNotice({
-    phase: loaded.state.phase,
-    reason: `${event.tool} failed: ${event.error.message}`
-  })
-
-  await blockWorkflow(stateStore, loaded.state, notice)
+  await stateStore.mutate((state) => ({
+    ...state,
+    updatedAt: new Date().toISOString(),
+    degradations: replaceDegradation(state.degradations, createToolErrorNotice({ tool: event.tool, phase: state.phase, reason: event.error.message }))
+  }))
 }
 
-async function blockWorkflow(
-  stateStore: WorkflowStateStore,
-  state: WorkflowState,
-  notice: DegradationNotice
-): Promise<void> {
-  await stateStore.update({
+function blockWorkflow(state: WorkflowState, notice: DegradationNotice): WorkflowState {
+  return {
     ...state,
     phase: "blocked",
     updatedAt: notice.occurredAt,
     degradations: replaceDegradation(state.degradations, notice)
-  })
+  }
 }
 
 async function injectCompactionContext(
@@ -223,14 +293,12 @@ async function injectCompactionContext(
   event: SessionCompactionEvent
 ): Promise<void> {
   const context = createCompactionContext(await stateStore.load())
-  if (context.trim().length === 0) {
+  if (context.trim().length === 0 || event.system.some((part) => part.text.startsWith(continuityHeading))) {
     return
   }
 
-  event.messages.push({
-    role: "user",
-    content: [{ type: "text", text: context.trimEnd() }]
-  })
+  // System parts are plain structs; synthetic messages would have to satisfy the LLM.Message schema.
+  event.system.push({ type: "text", text: context.trimEnd() })
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -257,7 +325,7 @@ function createCompactionContext(loaded: WorkflowStateLoadSnapshot): string {
   }
 
   // Keep compaction context to workflow state only. Model, provider, transcript, and unrelated project data stay out.
-  const lines = ["OpenUltraCode workflow continuity"]
+  const lines = [continuityHeading]
 
   if (loaded.state !== undefined) {
     appendStateSummary(lines, loaded.state)
@@ -347,21 +415,35 @@ function toToolDefinition(
   }
 }
 
-function verificationInputSchema(): Record<string, unknown> {
+const verificationProperties = {
+  id: { type: "string" },
+  kind: { type: "string", enum: ["test", "build", "lint", "typecheck", "audit", "manual", "artifact"] },
+  summary: { type: "string" },
+  criteriaIds: { type: "array", items: { type: "string" } },
+  command: { type: "string" },
+  artifact: { type: "string" },
+  reason: { type: "string", description: "Required unless result is pass." },
+  residualRisk: { type: "string", description: "Required unless result is pass." }
+}
+
+// The required lists match the validators in verification-tool.ts (tests check this).
+export function verificationInputSchema(): Record<string, unknown> {
   return {
     type: "object",
     properties: {
-      id: { type: "string" },
-      kind: { type: "string", enum: ["test", "build", "lint", "typecheck", "audit", "manual", "artifact"] },
-      result: { type: "string", enum: ["pass", "fail", "not-run", "blocked"] },
-      summary: { type: "string" },
-      criteriaIds: { type: "array", items: { type: "string" } },
-      command: { type: "string" },
-      artifact: { type: "string" },
-      reason: { type: "string" },
-      residualRisk: { type: "string" }
+      ...verificationProperties,
+      result: { type: "string", enum: ["pass", "fail", "not-run", "blocked"] }
     },
-    required: ["id", "kind", "summary", "criteriaIds"],
+    required: ["id", "kind", "result", "summary", "criteriaIds"],
+    additionalProperties: false
+  }
+}
+
+export function blockedCheckInputSchema(): Record<string, unknown> {
+  return {
+    type: "object",
+    properties: verificationProperties,
+    required: ["id", "kind", "summary", "criteriaIds", "reason", "residualRisk"],
     additionalProperties: false
   }
 }

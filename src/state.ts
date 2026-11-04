@@ -14,8 +14,17 @@ export interface WorkflowStateLoadResult {
 export interface WorkflowStateStore {
   readonly load: () => Promise<WorkflowStateLoadResult>
   readonly update: (state: WorkflowState) => Promise<void>
+  /**
+   * Loads, changes, and writes the state as one step. Mutations of the same state file are
+   * serialized within the process, so concurrent hooks and tools cannot drop each other's
+   * changes. Returning undefined leaves the state unchanged.
+   */
+  readonly mutate: (change: (state: WorkflowState) => WorkflowState | undefined) => Promise<WorkflowState | undefined>
   readonly clear: () => Promise<void>
 }
+
+// One queue per state file and process: every plugin instance and tool shares it.
+const mutationQueues: Map<string, Promise<unknown>> = ((globalThis as Record<symbol, unknown>)[Symbol.for("open-ultracode.state-queues")] ??= new Map<string, Promise<unknown>>()) as Map<string, Promise<unknown>>
 
 export interface WorkflowStateStoreConfig {
   readonly state: {
@@ -30,27 +39,49 @@ export function createWorkflowStateStore(
   const root = resolve(projectRoot)
   const statePath = resolveStatePath(projectRoot, config.state.directory)
 
-  return {
+  const store: WorkflowStateStore = {
     async load(): Promise<WorkflowStateLoadResult> {
       await rejectSymlinkedStatePath(root, config.state.directory, statePath)
 
+      let raw: string
       try {
-        const raw = await readFile(statePath, "utf8")
-        const parsed: unknown = JSON.parse(raw)
-
-        if (!isPersistedWorkflowState(parsed)) {
-          throw new Error("state file did not match the expected schema")
-        }
-
-        return { state: parsed.state, degradations: [] }
+        raw = await retryTransient(() => readFile(statePath, "utf8"))
       } catch (error) {
         if (isNodeError(error) && error.code === "ENOENT") {
           return { state: undefined, degradations: [] }
         }
-
-        await backupCorruptState(statePath)
-        return { state: undefined, degradations: [createCorruptStateNotice(error)] }
+        // I/O errors are not corruption: never move a valid but busy state file aside.
+        throw error
       }
+
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(raw)
+      } catch (error) {
+        return backupCorrupt(error)
+      }
+      if (!isPersistedWorkflowState(parsed)) {
+        return backupCorrupt(new Error("state file did not match the expected schema"))
+      }
+
+      return { state: parsed.state, degradations: [] }
+    },
+
+    mutate(change) {
+      const previous = mutationQueues.get(statePath) ?? Promise.resolve()
+      const next = previous.catch(() => {}).then(async () => {
+        const { state } = await store.load()
+        if (state === undefined) return undefined
+        const changed = change(state)
+        if (changed === undefined) return state
+        await store.update(changed)
+        return changed
+      })
+      mutationQueues.set(statePath, next)
+      void next.finally(() => {
+        if (mutationQueues.get(statePath) === next) mutationQueues.delete(statePath)
+      }).catch(() => {})
+      return next
     },
 
     async update(state: WorkflowState): Promise<void> {
@@ -70,6 +101,30 @@ export function createWorkflowStateStore(
       await rm(statePath, { force: true })
     }
   }
+
+  async function backupCorrupt(error: unknown): Promise<WorkflowStateLoadResult> {
+    await backupCorruptState(statePath)
+    return { state: undefined, degradations: [createCorruptStateNotice(error)] }
+  }
+
+  return store
+}
+
+const transientErrorCodes = new Set(["EPERM", "EACCES", "EBUSY"])
+
+/**
+ * Windows reports EPERM/EACCES/EBUSY while another handle (a concurrent read, an indexer,
+ * antivirus) holds the file; the operation succeeds a few milliseconds later.
+ */
+async function retryTransient<T>(operation: () => Promise<T>, attempts = 8): Promise<T> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await operation()
+    } catch (error) {
+      if (attempt >= attempts || !isNodeError(error) || error.code === undefined || !transientErrorCodes.has(error.code)) throw error
+      await new Promise((resolve) => setTimeout(resolve, 5 * attempt))
+    }
+  }
 }
 
 async function writeStateAtomically(statePath: string, contents: string): Promise<void> {
@@ -79,7 +134,7 @@ async function writeStateAtomically(statePath: string, contents: string): Promis
 
   try {
     await writeFile(stagingPath, contents, { encoding: "utf8", flag: "wx" })
-    await rename(stagingPath, statePath)
+    await retryTransient(() => rename(stagingPath, statePath))
   } finally {
     await rm(stagingDirectory, { force: true, recursive: true })
   }
@@ -142,7 +197,7 @@ async function rejectSymlinkedStatePath(root: string, stateDirectory: string, st
 
 async function backupCorruptState(statePath: string): Promise<void> {
   try {
-    await rename(statePath, `${statePath}.bak`)
+    await retryTransient(() => rename(statePath, `${statePath}.bak`))
   } catch (error) {
     if (!isNodeError(error) || error.code !== "ENOENT") {
       throw error
