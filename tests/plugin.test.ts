@@ -130,7 +130,12 @@ function createFakeContext(directory: string, options: unknown, sessionDirectory
         return Promise.resolve({
           data: [
             { id: "small-model", providerID: "acme", limit: { output: 8192 }, variants: [{ id: "high" }] },
-            { id: "mistral-large-4", providerID: "mistral", limit: { output: 262144 }, variants: [{ id: "high" }, { id: "max" }] }
+            { id: "mistral-large-4", providerID: "mistral", limit: { output: 262144 }, variants: [{ id: "high" }, { id: "max" }] },
+            // As opencode 2.2.5 reports them for the vibe-oidc provider.
+            { id: "mistral-large-4", providerID: "vibe-oidc", limit: { output: 256000 }, variants: [{ id: "low" }, { id: "high" }, { id: "max" }] },
+            { id: "zai-glm-5-3", providerID: "vibe-oidc", limit: { output: 131072 }, variants: [{ id: "low" }, { id: "high" }, { id: "max" }] },
+            { id: "mistral-large-latest", providerID: "vibe-oidc", limit: { output: 256000 }, variants: [] },
+            { id: "mistral-large-2512", providerID: "vibe-oidc", limit: { output: 256000 }, variants: [] }
           ]
         })
       }
@@ -356,8 +361,17 @@ describe("OpenUltraCode OpenCode 2 plugin entry point", () => {
     await getSessionHook(ctx, "context")(unknown as never)
 
     assert.deepEqual(small.options, { maxTokens: 8192, reasoningEffort: "high" })
-    // Without model information the configured values apply, with the provider-safe "high".
-    assert.deepEqual(unknown.options, { maxTokens: 128000, reasoningEffort: "high" })
+    // Without model information the configured token budget applies and no effort is guessed.
+    assert.deepEqual(unknown.options, { maxTokens: 128000 })
+  })
+
+  it("sends no reasoning effort to a model that declares no variants (vibe-oidc/mistral-large-latest)", async () => {
+    const ctx = await setupPlugin(await createProjectRoot(), { enabled: true })
+    const event = { options: { maxTokens: 256000 }, model: { providerID: "vibe-oidc", id: "mistral-large-latest" } } as unknown as SessionContextEvent
+
+    await getSessionHook(ctx, "context")(event as never)
+
+    assert.deepEqual(event.options, { maxTokens: 256000 })
   })
 
   it("does not mutate request options when high-effort mode is disabled", async () => {
@@ -919,6 +933,55 @@ describe("OpenUltraCode workflow lifecycle in OpenCode 2", () => {
     await executeTool(ctx, "open_ultracode_configure_fusion", { panelA: "openai/gpt-x" })
     assert.deepEqual(ctx.permissionAsserts.map((request) => request.action), ["open_ultracode_configure_fusion", "open_ultracode_configure_fusion"])
     assert.match(await readFile(panelA, "utf8"), /^model: openai\/gpt-x$/mu)
+  })
+
+  async function fusionProject(models: { panelA: string; panelB: string; decider: string }): Promise<string> {
+    const projectRoot = await createProjectRoot()
+    const agents = join(projectRoot, ".opencode", "agents")
+    await mkdir(agents, { recursive: true })
+    const files = { panelA: "ultracode-fusion-panel-a.md", panelB: "ultracode-fusion-panel-b.md", decider: "ultracode-fusion-arbiter.md" }
+    for (const [role, file] of Object.entries(files)) {
+      const reference = models[role as keyof typeof models]
+      const variant = reference.endsWith("#max") ? "variant: max\nreasoningEffort: max\n" : ""
+      await writeFile(join(agents, file), `---\ndescription: Fusion role.\nmode: subagent\nmodel: ${reference.replace(/#max$/u, "")}\n${variant}---\n\nRole.\n`)
+    }
+    return projectRoot
+  }
+
+  it("refuses a fusion variant the model does not declare and accepts declared ones", async () => {
+    const ctx = await setupPlugin(await fusionProject({ panelA: "vibe-oidc/mistral-large-4#max", panelB: "vibe-oidc/zai-glm-5-3#max", decider: "vibe-oidc/mistral-large-4#max" }), { enabled: true })
+
+    await assert.rejects(
+      () => executeTool(ctx, "open_ultracode_configure_fusion", { panelA: "vibe-oidc/mistral-large-latest#max" }),
+      /Fusion panel A uses vibe-oidc\/mistral-large-latest#max, but opencode reports no "max" variant .*declares no variants.*--panel-a vibe-oidc\/mistral-large-latest\./u
+    )
+    assert.equal(ctx.permissionAsserts.length, 0, "an invalid request must fail before asking for permission")
+
+    await executeTool(ctx, "open_ultracode_configure_fusion", { panelA: "vibe-oidc/mistral-large-latest", panelB: "vibe-oidc/zai-glm-5-3#max" })
+    assert.equal(ctx.permissionAsserts.length, 1)
+  })
+
+  it("warns before fusion dispatch when a fusion agent selects a variant its model does not declare", async () => {
+    // Captured: "Subagent failed: Variant unavailable for vibe-oidc/mistral-large-latest: max".
+    const projectRoot = await fusionProject({ panelA: "vibe-oidc/mistral-large-latest#max", panelB: "vibe-oidc/zai-glm-5-3#max", decider: "vibe-oidc/mistral-large-2512#max" })
+    const ctx = await setupPlugin(projectRoot, { enabled: true })
+    const template = await readFile(join(process.cwd(), ".opencode", "commands", "ultrathink-fusion.md"), "utf8")
+    const event = { sessionID: "session-1", prompt: { text: template.replace(/^---[\s\S]*?---\r?\n/u, "").replaceAll("$ARGUMENTS", "question") } } as unknown as SessionPromptEvent
+
+    await getSessionHook(ctx, "prompt")(event as never)
+    await getSessionHook(ctx, "prompt")(event as never)
+
+    assert.equal(event.prompt.text.split("OpenUltraCode fusion check:").length - 1, 1)
+    assert.match(event.prompt.text, /Fusion panel A uses vibe-oidc\/mistral-large-latest#max/u)
+    assert.match(event.prompt.text, /Fusion arbiter uses vibe-oidc\/mistral-large-2512#max/u)
+    assert.doesNotMatch(event.prompt.text, /Fusion panel B uses/u)
+    const status = await executeTool(ctx, "open_ultracode_status", {}) as { degradations: string[] }
+    assert.ok(status.degradations.includes("unsupported-fusion-panel-a-variant"), status.degradations.join(", "))
+
+    const valid = await setupPlugin(await fusionProject({ panelA: "vibe-oidc/mistral-large-latest", panelB: "vibe-oidc/zai-glm-5-3#max", decider: "vibe-oidc/mistral-large-4#max" }), { enabled: true })
+    const clean = { sessionID: "session-1", prompt: { text: template.replace(/^---[\s\S]*?---\r?\n/u, "").replaceAll("$ARGUMENTS", "question") } } as unknown as SessionPromptEvent
+    await getSessionHook(valid, "prompt")(clean as never)
+    assert.doesNotMatch(clean.prompt.text, /OpenUltraCode fusion check:/u)
   })
 
   it("advertises exactly the fields its validators require", async () => {

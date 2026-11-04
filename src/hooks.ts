@@ -1,7 +1,8 @@
 import {
   createFailedPhaseNotice,
   createPermissionDeniedNotice,
-  createToolErrorNotice
+  createToolErrorNotice,
+  createUnsupportedCapabilityNotice
 } from "./degradation.js"
 import type { DegradationNotice, Finding, OpenUltraCodeOptions, VerificationEvidence, WorkflowState } from "./types.js"
 import type { WorkflowStateStore } from "./state.js"
@@ -55,13 +56,14 @@ export async function registerOpenUltraCode(
   activeProjects.add(projectDirectory)
 
   const controller = new AbortController()
-  const modelLimits = createModelLimitsLookup(ctx)
+  const catalog = createModelCatalog(ctx)
   const registrations = await Promise.all([
     ctx.session.hook("context", guarded("context hook", async (event) => {
-      applyHighEffortRequestBehavior(config.highEffort, event.options, await modelLimits(event.model))
+      applyHighEffortRequestBehavior(config.highEffort, event.options, await modelLimits(catalog, event.model))
     })),
     ctx.session.hook("prompt", guarded("prompt hook", async (event: SessionPromptEvent) => {
       await activateWorkflow(stateStore, event)
+      await checkFusionVariants(catalog, stateStore, projectDirectory, event)
     })),
     ctx.session.hook("compaction", guarded("compaction hook", async (event) => {
       await injectCompactionContext(stateStore, event)
@@ -79,7 +81,7 @@ export async function registerOpenUltraCode(
       await observeToolExecution(stateStore, event)
     })),
     ctx.tool.transform((editor) => {
-      for (const tool of createTools(ctx, config, stateStore, projectDirectory)) editor.add(tool)
+      for (const tool of createTools(ctx, catalog, config, stateStore, projectDirectory)) editor.add(tool)
     })
   ])
 
@@ -96,26 +98,77 @@ export async function registerOpenUltraCode(
 
 const modelListTtlMs = 60_000
 
-/**
- * Looks up the selected model's output limit from opencode's model list, cached
- * for a minute. Unknown models or a failing lookup yield no limits, so the configured values apply.
- */
-function createModelLimitsLookup(ctx: OpenCodePluginContext): (model: ModelRef | undefined) => Promise<ModelLimits> {
+export interface ModelCatalog {
+  /** The model's entry in opencode's model list; undefined when unknown or the list is unavailable. */
+  readonly find: (providerID: string, modelID: string) => Promise<ModelInfoSummary | undefined>
+}
+
+/** opencode's model list (`ctx.model.list()`), cached for a minute and shared by all hooks and tools. */
+export function createModelCatalog(ctx: OpenCodePluginContext): ModelCatalog {
   let cache: { readonly models: readonly ModelInfoSummary[]; readonly loadedAt: number } | undefined
-  return async (model) => {
-    if (model === undefined) return {}
-    try {
-      if (cache === undefined || Date.now() - cache.loadedAt > modelListTtlMs) {
-        cache = { models: (await ctx.model.list()).data, loadedAt: Date.now() }
+  return {
+    async find(providerID, modelID) {
+      try {
+        if (cache === undefined || Date.now() - cache.loadedAt > modelListTtlMs) {
+          cache = { models: (await ctx.model.list()).data, loadedAt: Date.now() }
+        }
+      } catch (error) {
+        logFailure("model lookup", error)
+        return undefined
       }
-    } catch (error) {
-      logFailure("model lookup", error)
-      return {}
+      return cache.models.find((entry) => entry.providerID === providerID && (entry.id === modelID || entry.modelID === modelID))
     }
-    const info = cache.models.find((entry) => entry.providerID === model.providerID && (entry.id === model.id || entry.modelID === model.id))
-    if (info === undefined) return {}
-    return info.limit?.output === undefined ? {} : { outputTokens: info.limit.output }
   }
+}
+
+/** Output limit and declared variants of the selected model; empty when opencode does not list it. */
+async function modelLimits(catalog: ModelCatalog, model: ModelRef | undefined): Promise<ModelLimits> {
+  const info = model === undefined ? undefined : await catalog.find(model.providerID, model.id)
+  if (info === undefined) return {}
+  return {
+    ...(info.limit?.output === undefined ? {} : { outputTokens: info.limit.output }),
+    variants: (info.variants ?? []).map((variant) => variant.id)
+  }
+}
+
+export interface FusionVariantIssue {
+  readonly role: string
+  readonly reference: string
+  readonly variants: readonly string[]
+}
+
+/**
+ * Checks `provider/model#variant` references against the variants opencode reports for each
+ * model. A model without the requested variant makes opencode refuse to start the agent
+ * ("Variant unavailable for <model>: max"). Models opencode does not list are not judged.
+ */
+export async function findVariantIssues(catalog: ModelCatalog, references: Readonly<Record<string, string>>): Promise<FusionVariantIssue[]> {
+  const issues: FusionVariantIssue[] = []
+  for (const [role, reference] of Object.entries(references)) {
+    const match = /^([^/]+)\/([^#]+)#(.+)$/u.exec(reference)
+    if (match === null) continue
+    const [, providerID = "", modelID = "", variant = ""] = match
+    const info = await catalog.find(providerID, modelID)
+    const variants = (info?.variants ?? []).map((entry) => entry.id)
+    if (info !== undefined && !variants.includes(variant)) issues.push({ role, reference, variants })
+  }
+  return issues
+}
+
+const fusionRoleLabels: Readonly<Record<string, { readonly label: string; readonly flag: string }>> = {
+  panelA: { label: "Fusion panel A", flag: "--panel-a" },
+  panelB: { label: "Fusion panel B", flag: "--panel-b" },
+  decider: { label: "Fusion arbiter", flag: "--decider" }
+}
+
+export function describeVariantIssue(issue: FusionVariantIssue): string {
+  const role = fusionRoleLabels[issue.role] ?? { label: issue.role, flag: `--${issue.role}` }
+  const base = issue.reference.replace(/#[^#]+$/u, "")
+  const variant = issue.reference.slice(base.length + 1)
+  const available = issue.variants.length === 0 ? "it declares no variants" : `it declares ${issue.variants.join(", ")}`
+  const fixes = [base, ...issue.variants.map((entry) => `${base}#${entry}`)].filter((entry) => /^[^#]+(?:#max)?$/u.test(entry))
+  return `${role.label} uses ${issue.reference}, but opencode reports no "${variant}" variant for ${base} (${available}). ` +
+    `Fix it with /ultracode-fusion-models ${role.flag} ${fixes.join(" or ")}.`
 }
 
 function guarded<T>(label: string, callback: (event: T) => void | Promise<void>): (event: T) => Promise<void> {
@@ -134,6 +187,7 @@ function logFailure(label: string, error: unknown): void {
 
 function createTools(
   ctx: OpenCodePluginContext,
+  catalog: ModelCatalog,
   config: OpenUltraCodeOptions,
   stateStore: WorkflowStateStore,
   projectDirectory: string
@@ -173,6 +227,12 @@ function createTools(
         // assert() prompts according to the session's rules and rejects when denied; the
         // rejection must propagate so OpenCode ends the step instead of reporting success.
         if (["panelA", "panelB", "decider"].some((key) => request[key] !== undefined)) {
+          // Refuse a variant the model does not declare before asking or writing anything.
+          const requested = Object.fromEntries(
+            ["panelA", "panelB", "decider"].flatMap((key) => (typeof request[key] === "string" ? [[key, request[key]]] : []))
+          ) as Record<string, string>
+          const issues = await findVariantIssues(catalog, requested)
+          if (issues.length > 0) throw new TypeError(issues.map(describeVariantIssue).join(" "))
           await ctx.permission.assert({
             sessionID: context.sessionID,
             agent: context.agent,
@@ -244,6 +304,45 @@ async function activateWorkflow(stateStore: WorkflowStateStore, event: SessionPr
     event.prompt.text = `${event.prompt.text}\n\n${activationMarker} ${command.label}. The active selected opencode model is preserved. ` +
       "Record intake with open_ultracode_record_intake, evidence with open_ultracode_record_verification, and finish with open_ultracode_completion_report."
   }
+}
+
+const fusionCheckMarker = "OpenUltraCode fusion check:"
+
+/**
+ * Before a fusion workflow dispatches its panels, compares each fusion agent's variant with
+ * the variants opencode reports for its model. A mismatch is shown in the prompt (so the
+ * coordinator stops instead of launching a subagent that opencode refuses) and recorded as a
+ * degradation notice.
+ */
+async function checkFusionVariants(
+  catalog: ModelCatalog,
+  stateStore: WorkflowStateStore,
+  projectDirectory: string,
+  event: SessionPromptEvent
+): Promise<void> {
+  const text = event.prompt.text
+  if (readWorkflowCommand(text) === undefined || !/ultracode-fusion-(?:panel|arbiter)/u.test(text) || text.includes(fusionCheckMarker)) {
+    return
+  }
+
+  const configured = await configureFusionModels(projectDirectory, {})
+  const issues = await findVariantIssues(catalog, { ...configured.models })
+  if (issues.length === 0) return
+
+  event.prompt.text = `${text}\n\n${fusionCheckMarker} ${issues.map(describeVariantIssue).join(" ")} ` +
+    "Do not dispatch the affected fusion agents until this is fixed; report the configuration problem to the user instead."
+  await stateStore.mutate((state) => ({
+    ...state,
+    updatedAt: new Date().toISOString(),
+    degradations: issues.reduce(
+      (notices, issue) => replaceDegradation(notices, createUnsupportedCapabilityNotice({
+        capability: `${fusionRoleLabels[issue.role]?.label ?? issue.role} variant`,
+        reason: describeVariantIssue(issue),
+        phase: state.phase
+      })),
+      state.degradations
+    )
+  }))
 }
 
 async function blockFromPermission(

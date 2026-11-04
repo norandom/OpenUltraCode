@@ -104,7 +104,10 @@ describe("OpenUltraCode command assets", () => {
     assert.match(content, /--decider/i)
     assert.match(content, /provider\/model/i)
     assert.match(content, /open_ultracode_configure_fusion/i)
-    assert.match(content, /maximum reasoning/i)
+    // `#max` is valid only where the model declares a max variant; the tool checks that itself.
+    assert.match(content, /valid only for models that declare one/i)
+    assert.match(content, /variants opencode reports/i)
+    assert.doesNotMatch(content, /opencode models --verbose/i)
     assert.match(content, /reject every other variant/i)
     assert.match(content, /restart/i)
     assert.doesNotMatch(content, /^model:/m)

@@ -169,20 +169,30 @@ describe("installer agent model editing", () => {
 
     assert.equal(
       readFileSync(file, "utf8"),
-      "---\r\ndescription: Panel\r\nmodel: mistral/mistral-large-4\r\nvariant: max\r\nmode: subagent\r\n---\r\nBody mentions\r\nmodel: not-frontmatter\r\n"
+      "---\r\ndescription: Panel\r\nmodel: mistral/mistral-large-4\r\nvariant: max\r\nreasoningEffort: max\r\nmode: subagent\r\n---\r\nBody mentions\r\nmodel: not-frontmatter\r\n"
     )
     assert.equal(getAgentModel(file), "mistral/mistral-large-4#max")
   })
 
   it("updates an existing variant and handles a model on the last frontmatter line", () => {
-    const withVariant = agentFile("---\nmodel: a/b\nvariant: low\n---\n")
+    const withVariant = agentFile("---\nmodel: a/b\nvariant: low\nreasoningEffort: low\n---\n")
     const lastLine = agentFile("---\r\nmode: subagent\r\nmodel: a/b\r\n---\r\n")
 
-    setAgentModel(withVariant, "c/d")
+    setAgentModel(withVariant, "c/d#max")
     setAgentModel(lastLine, "c/d#max")
 
-    assert.equal(readFileSync(withVariant, "utf8"), "---\nmodel: c/d\nvariant: max\n---\n")
-    assert.equal(readFileSync(lastLine, "utf8"), "---\r\nmode: subagent\r\nmodel: c/d\r\nvariant: max\r\n---\r\n")
+    assert.equal(readFileSync(withVariant, "utf8"), "---\nmodel: c/d\nvariant: max\nreasoningEffort: max\n---\n")
+    assert.equal(readFileSync(lastLine, "utf8"), "---\r\nmode: subagent\r\nmodel: c/d\r\nvariant: max\r\nreasoningEffort: max\r\n---\r\n")
+  })
+
+  it("removes variant and reasoningEffort for a plain model, for providers without variants such as vibe-oidc", () => {
+    // OpenCode refuses to start such an agent: "Variant unavailable for vibe-oidc/mistral-large-latest: max".
+    const file = agentFile("---\r\ndescription: Panel\r\nmodel: mistral/mistral-large-4\r\nvariant: max\r\nreasoningEffort: max\r\nmode: subagent\r\n---\r\nBody\r\n")
+
+    setAgentModel(file, "vibe-oidc/mistral-large-latest")
+
+    assert.equal(readFileSync(file, "utf8"), "---\r\ndescription: Panel\r\nmodel: vibe-oidc/mistral-large-latest\r\nmode: subagent\r\n---\r\nBody\r\n")
+    assert.equal(getAgentModel(file), "vibe-oidc/mistral-large-latest")
   })
 
   it("treats legacy placeholders and missing files as unset", () => {
@@ -218,7 +228,7 @@ describe("installer summary", () => {
     assert.match(summary, /^OpenUltraCode 9\.9\.9 installed$/mu)
     assert.match(summary, /Plugin entry: {4}\S+\/\.opencode\/plugins\/open-ultracode$/mu)
     assert.match(summary, /Fusion panel A: {2}vibe-oidc\/mistral-large-4 \(variant max\)$/mu)
-    assert.match(summary, /Fusion arbiter: {2}a\/b \(variant max\)$/mu)
+    assert.match(summary, /Fusion arbiter: {2}a\/b$/mu)
     assert.match(summary, /Commands: {8}\/ultracode \/ultrathink$/mu)
     assert.match(summary, /Agents: {10}3 installed/mu)
   })

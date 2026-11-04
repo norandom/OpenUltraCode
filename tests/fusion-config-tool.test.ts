@@ -36,6 +36,24 @@ describe("fusion model configuration tool", () => {
     assert.doesNotMatch(panelB, /^thinking:/m)
   })
 
+  it("keeps #max where the provider defines it and selects no variant for a plain model", async () => {
+    // Providers without variants (vibe-oidc) reject "max": "Variant unavailable for <model>: max".
+    const root = await createFusionProject(defaultFusionModels)
+
+    const result = await configureFusionModels(root, { panelA: "vibe-oidc/mistral-large-latest", decider: "opencode/kimi-k3#max" })
+
+    assert.equal(result.changed, true)
+    assert.equal(result.models.panelA, "vibe-oidc/mistral-large-latest")
+    assert.equal(result.reasoningEffort, "mixed-or-unset")
+    const panelA = await readFile(join(root, ".opencode", "agents", "ultracode-fusion-panel-a.md"), "utf8")
+    assert.match(panelA, /^model: vibe-oidc\/mistral-large-latest$/m)
+    assert.doesNotMatch(panelA, /^(?:variant|reasoningEffort):/m)
+    const decider = await readFile(join(root, ".opencode", "agents", "ultracode-fusion-arbiter.md"), "utf8")
+    assert.match(decider, /^variant: max$/m)
+    assert.match(decider, /^reasoningEffort: max$/m)
+    assert.equal((await configureFusionModels(root, {})).models.panelA, "vibe-oidc/mistral-large-latest", "a plain model must read back without #max")
+  })
+
   it("persists catalog model IDs whose nested model path begins with a sigil", async () => {
     const root = await createFusionProject(defaultFusionModels)
 

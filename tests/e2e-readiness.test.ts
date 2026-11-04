@@ -71,7 +71,8 @@ describe("OpenUltraCode end-to-end readiness", () => {
     const params: Record<string, unknown> = { temperature: 0.2 }
     const result = applyHighEffortRequestBehavior(
       { enabled: true, effort: "xhigh", outputTokens: 128000 },
-      params
+      params,
+      { variants: ["low", "high", "max"] }
     )
 
     assert.deepEqual(params, { temperature: 0.2, maxTokens: 128000, reasoningEffort: "high" })

@@ -11,11 +11,29 @@ export interface HighEffortApplyResult {
  */
 export type ChatParams = Record<string, unknown>
 
-/** What the selected model allows, when opencode knows it. */
+/** What opencode reports for the selected model (`ctx.model.list()`). */
 export interface ModelLimits {
   /** Maximum output tokens of the model (`limit.output`). */
   readonly outputTokens?: number
+  /**
+   * Variant IDs the model offers, for example ["low", "high", "max"]. These are the reasoning
+   * efforts the provider declares for the model; an empty list means it declares none.
+   * Undefined when opencode does not list the model.
+   */
+  readonly variants?: readonly string[]
 }
+
+const effortStrength: Readonly<Record<string, number>> = {
+  none: 0,
+  minimal: 1,
+  low: 2,
+  medium: 3,
+  high: 4,
+  xhigh: 5,
+  max: 6
+}
+
+const configuredStrength: Readonly<Record<HighEffortLevel, number>> = { medium: 3, high: 4, xhigh: 5 }
 
 export function applyHighEffortRequestBehavior(
   options: HighEffortOptions,
@@ -35,37 +53,36 @@ export function applyHighEffortRequestBehavior(
     appliedFields.push("maxTokens")
   }
 
-  const requested = toProviderReasoningEffort(options.effort)
-  params.reasoningEffort =
-    typeof params.reasoningEffort === "string" ? strongestReasoningEffort(params.reasoningEffort, requested) : requested
-  appliedFields.push("reasoningEffort")
+  const effort = selectReasoningEffort(options.effort, limits.variants)
+  if (effort !== undefined && !isAtLeast(params.reasoningEffort, effort)) {
+    params.reasoningEffort = effort
+    appliedFields.push("reasoningEffort")
+  }
 
   return { appliedFields }
 }
 
 /**
- * The plugin never sends "xhigh" itself: providers reject it (Mistral answers 400 Bad Request
- * for reasoning_effort "xhigh" while "high" succeeds), and a model offering an opencode "max"
- * variant says nothing about which raw values its API accepts. A stronger effort the user
- * selected through opencode (for example a variant) is still kept by strongestReasoningEffort.
+ * Picks the strongest effort the model itself declares (its variant IDs) that does not exceed
+ * the configured level. Raw values outside that list are rejected by providers: Mistral answers
+ * 400 for "xhigh", and for any reasoning_effort on models that declare no variants
+ * (vibe-oidc/mistral-large-latest). No variants, or an unknown model, means no effort is sent.
  */
-function toProviderReasoningEffort(effort: HighEffortLevel): "medium" | "high" {
-  return effort === "medium" ? "medium" : "high"
+export function selectReasoningEffort(configured: HighEffortLevel, variants: readonly string[] | undefined): string | undefined {
+  if (variants === undefined) return undefined
+  const limit = configuredStrength[configured]
+  let selected: string | undefined
+  for (const variant of variants) {
+    const strength = effortStrength[variant]
+    if (strength === undefined || strength < effortStrength.low! || strength > limit) continue
+    if (selected === undefined || strength > (effortStrength[selected] ?? -1)) selected = variant
+  }
+  return selected
 }
 
-function strongestReasoningEffort(current: string, requested: "medium" | "high"): string {
-  const strength: Readonly<Record<string, number>> = {
-    none: 0,
-    minimal: 1,
-    low: 2,
-    medium: 3,
-    high: 4,
-    xhigh: 5,
-    max: 6
-  }
-  const currentStrength = strength[current]
-  const requestedStrength = strength[requested]
-  return currentStrength !== undefined && requestedStrength !== undefined && currentStrength > requestedStrength
-    ? current
-    : requested
+/** A stronger effort that opencode already set (for example from a selected variant) is kept. */
+function isAtLeast(current: unknown, effort: string): boolean {
+  if (typeof current !== "string") return false
+  const currentStrength = effortStrength[current]
+  return currentStrength !== undefined && currentStrength >= (effortStrength[effort] ?? Number.POSITIVE_INFINITY)
 }

@@ -183,14 +183,18 @@ export function unregisterPlugin({ configDir, log = () => {} }) {
 
 const frontmatterPattern = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u
 
-/** Returns the configured "provider/model#max" of a fusion agent, or undefined for placeholders. */
+/**
+ * Returns a fusion agent's model reference as configured: "provider/model#max" when the agent
+ * selects the max variant, "provider/model" when it selects none; undefined for placeholders.
+ */
 export function getAgentModel(file) {
   if (!fs.existsSync(file)) return undefined
   const frontmatter = frontmatterPattern.exec(fs.readFileSync(file, "utf8"))?.[1]
   const model = frontmatter === undefined ? undefined : /^model:[ \t]*(\S+)[ \t]*\r?$/mu.exec(frontmatter)?.[1]
   const baseModel = model?.replace(/#[^#]+$/u, "")
   if (baseModel === undefined || legacyFusionPlaceholders.has(baseModel)) return undefined
-  return `${baseModel}#max`
+  const variant = /#([^#]+)$/u.exec(model ?? "")?.[1] ?? /^variant:[ \t]*(\S+)[ \t]*\r?$/mu.exec(frontmatter ?? "")?.[1]
+  return variant === "max" ? `${baseModel}#max` : baseModel
 }
 
 export function assertModelId(model) {
@@ -199,7 +203,11 @@ export function assertModelId(model) {
   }
 }
 
-/** Sets model and "variant: max" inside the frontmatter only, keeping the file's line endings. */
+/**
+ * Sets the model inside the frontmatter only, keeping the file's line endings. "#max" selects
+ * opencode's max variant (`variant: max` and `reasoningEffort: max`); a plain provider/model
+ * removes both, because providers without variants (for example vibe-oidc) reject "max".
+ */
 export function setAgentModel(file, model) {
   assertModelId(model)
   if (!fs.existsSync(file)) throw new InstallerError(`Missing fusion agent file: ${file}`)
@@ -210,9 +218,15 @@ export function setAgentModel(file, model) {
   const eol = content.includes("\r\n") ? "\r\n" : "\n"
   const baseModel = model.replace(/#[^#]+$/u, "")
   let frontmatter = match[1].replace(/^model:.*?(\r?)$/mu, `model: ${baseModel}$1`)
-  frontmatter = /^variant:/mu.test(frontmatter)
-    ? frontmatter.replace(/^variant:.*?(\r?)$/mu, "variant: max$1")
-    : frontmatter.replace(/^(model:.*?)(\r?)$/mu, (_line, body, cr) => cr === "" ? `${body}${eol}variant: max` : `${body}\r\nvariant: max\r`)
+  if (model.endsWith("#max")) {
+    for (const key of ["reasoningEffort", "variant"]) {
+      frontmatter = new RegExp(`^${key}:`, "mu").test(frontmatter)
+        ? frontmatter.replace(new RegExp(`^${key}:.*?(\\r?)$`, "mu"), `${key}: max$1`)
+        : frontmatter.replace(/^(model:.*?)(\r?)$/mu, (_line, body, cr) => cr === "" ? `${body}${eol}${key}: max` : `${body}\r\n${key}: max\r`)
+    }
+  } else {
+    frontmatter = frontmatter.split("\n").filter((line) => !/^(?:variant|reasoningEffort):/u.test(line)).join("\n")
+  }
 
   const start = match[0].indexOf(match[1])
   const updated = content.slice(0, start) + frontmatter + content.slice(start + match[1].length)

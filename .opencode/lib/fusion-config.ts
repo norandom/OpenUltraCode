@@ -71,13 +71,15 @@ export async function configureFusionModels(
   const hasUpdates = input.panelA !== undefined || input.panelB !== undefined || input.decider !== undefined
   const requested = hasUpdates ? readRequestedModels(input, current) : current
   const updates = hasUpdates
-    ? snapshots.filter(
-        (snapshot) =>
+    ? snapshots.filter((snapshot) => {
+        const wantsMax = requested[snapshot.role].endsWith("#max")
+        return (
           snapshot.model !== requested[snapshot.role] ||
-          !snapshot.usesMaxReasoning ||
-          !snapshot.usesMaxVariant ||
+          snapshot.usesMaxReasoning !== wantsMax ||
+          snapshot.usesMaxVariant !== wantsMax ||
           snapshot.hasLegacyThinkingOption
-      )
+        )
+      })
     : []
 
   if (updates.length > 0) {
@@ -88,11 +90,7 @@ export async function configureFusionModels(
     changed: updates.length > 0,
     directory,
     models: requested,
-    reasoningEffort: updates.length > 0 || snapshots.every(
-      (snapshot) => snapshot.usesMaxReasoning && snapshot.usesMaxVariant
-    )
-      ? "max"
-      : "mixed-or-unset",
+    reasoningEffort: Object.values(requested).every((model) => model.endsWith("#max")) ? "max" : "mixed-or-unset",
     reloadAdvice: "Quit and restart OpenCode to load the updated fusion agent metadata before the next fusion run."
   }
 }
@@ -109,22 +107,23 @@ function readRequestedModels(input: ConfigureFusionModelsInput, current: FusionM
   }
 }
 
+/**
+ * The reference is kept exactly as given: `provider/model#max` selects opencode's "max"
+ * variant, a plain `provider/model` selects none. Forcing "#max" breaks providers that define
+ * no variants (for example vibe-oidc: "Variant unavailable for <model>: max").
+ */
 function readModelReference(value: unknown, fallback: string, name: string): string {
   if (value === undefined) {
-    return withMaxVariant(fallback)
+    return fallback
   }
   if (typeof value !== "string" || !isModelReference(value)) {
     throw new TypeError(`${name} must be a provider/model reference with no variant or the #max variant`)
   }
-  return withMaxVariant(value)
+  return value
 }
 
 export function isModelReference(value: string): boolean {
   return fusionModelReferencePattern.test(value)
-}
-
-function withMaxVariant(value: string): string {
-  return `${value.replace(/#[^#]+$/u, "")}#max`
 }
 
 async function findFusionAgentDirectory(projectRoot: string): Promise<string> {
@@ -293,19 +292,28 @@ function setFusionAgentOptions(content: string, model: string, fileName: string)
   const document = readFrontmatter(content, fileName)
   readFrontmatterModelSelection(document.source, fileName)
   readUsesMaxReasoning(document.source, fileName)
+  const wantsMax = model.endsWith("#max")
   const baseModel = model.replace(/#max$/u, "")
   let updated = document.source.replace(/^model:[ \t]*\S+[ \t]*$/mu, `model: ${baseModel}`)
 
-  if (/^variant:/mu.test(updated)) {
-    updated = updated.replace(/^variant:[^\r\n]*$/mu, "variant: max")
-  } else {
-    updated = updated.replace(/^model:[^\r\n]*$/mu, (line) => `${line}${document.newline}variant: max`)
-  }
+  if (wantsMax) {
+    if (/^variant:/mu.test(updated)) {
+      updated = updated.replace(/^variant:[^\r\n]*$/mu, "variant: max")
+    } else {
+      updated = updated.replace(/^model:[^\r\n]*$/mu, (line) => `${line}${document.newline}variant: max`)
+    }
 
-  if (/^reasoningEffort:/mu.test(updated)) {
-    updated = updated.replace(/^reasoningEffort:[^\r\n]*$/mu, "reasoningEffort: max")
+    if (/^reasoningEffort:/mu.test(updated)) {
+      updated = updated.replace(/^reasoningEffort:[^\r\n]*$/mu, "reasoningEffort: max")
+    } else {
+      updated = updated.replace(/^model:[^\r\n]*$/mu, (line) => `${line}${document.newline}reasoningEffort: max`)
+    }
   } else {
-    updated = updated.replace(/^model:[^\r\n]*$/mu, (line) => `${line}${document.newline}reasoningEffort: max`)
+    // Without "#max" the agent must not request a variant the provider may not define.
+    updated = updated
+      .split(document.newline)
+      .filter((line) => !/^(?:variant|reasoningEffort):/u.test(line))
+      .join(document.newline)
   }
 
   updated = updated.replace(
