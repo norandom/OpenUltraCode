@@ -111,6 +111,6 @@ function copyProject(): string {
     cpSync(join(projectRoot, name), join(root, name))
   }
   cpSync(join(projectRoot, ".opencode", "commands"), join(root, ".opencode", "commands"), { recursive: true })
-  cpSync(join(projectRoot, ".opencode", "agents"), join(root, ".opencode", "agents"), { recursive: true })
+  cpSync(join(projectRoot, "assets", "agents"), join(root, "assets", "agents"), { recursive: true })
   return root
 }

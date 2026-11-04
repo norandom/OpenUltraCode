@@ -167,7 +167,7 @@ export function validateInstallers(root = process.cwd()): InstallerValidationRes
 }
 
 function listShipped(root: string, kind: string): string[] | undefined {
-  const directory = join(root, ".opencode", kind)
+  const directory = join(root, kind === "agents" ? "assets" : ".opencode", kind)
   if (!existsSync(directory)) return undefined
   return readdirSync(directory).filter((name) => name.endsWith(".md")).sort()
 }

@@ -12,7 +12,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 export const releaseFiles = [
-  ".opencode/agents",
+  "assets/agents",
   ".opencode/commands",
   ".opencode/lib",
   ".opencode/plugins",

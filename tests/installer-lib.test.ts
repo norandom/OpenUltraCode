@@ -219,9 +219,10 @@ describe("installer summary", () => {
     const target = configDir()
     for (const [kind, names] of [["commands", ["ultracode.md", "ultrathink.md"]], ["agents", ["ultracode-fusion-panel-a.md", "ultracode-fusion-panel-b.md", "ultracode-fusion-arbiter.md"]]] as const) {
       for (const directory of [source, target]) {
-        mkdirSync(join(directory, ".opencode", kind), { recursive: true })
+        const shippedDir = join(directory, kind === "agents" ? "assets" : ".opencode", kind)
+        mkdirSync(shippedDir, { recursive: true })
         mkdirSync(join(target, kind), { recursive: true })
-        for (const name of names) writeFileSync(join(directory, ".opencode", kind, name), "---\nmodel: a/b\n---\n")
+        for (const name of names) writeFileSync(join(shippedDir, name), "---\nmodel: a/b\n---\n")
       }
       for (const name of names) writeFileSync(join(target, kind, name), "---\nmodel: a/b\n---\n")
     }

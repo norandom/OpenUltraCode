@@ -157,7 +157,7 @@ function Install-GlobalAssets([string]$SourceDir, [hashtable]$Overrides) {
   $skillsDir = Join-Path $OpenCodeConfigDir "skills"
   $commandsDir = Join-Path $OpenCodeConfigDir "commands"
   $agentsDir = Join-Path $OpenCodeConfigDir "agents"
-  $models = Resolve-FusionModels (Join-Path $SourceDir ".opencode\agents") $agentsDir $Overrides
+  $models = Resolve-FusionModels (Join-Path $SourceDir "assets\agents") $agentsDir $Overrides
 
   New-Item -ItemType Directory -Path $skillsDir, $commandsDir, $agentsDir -Force | Out-Null
 
@@ -169,7 +169,7 @@ function Install-GlobalAssets([string]$SourceDir, [hashtable]$Overrides) {
     Copy-Item -Path (Join-Path $SourceDir ".opencode\commands\$name") -Destination $commandsDir -Force
   }
   foreach ($name in $ShippedAgents) {
-    Copy-Item -Path (Join-Path $SourceDir ".opencode\agents\$name") -Destination $agentsDir -Force
+    Copy-Item -Path (Join-Path $SourceDir "assets\agents\$name") -Destination $agentsDir -Force
   }
   foreach ($agent in $FusionAgents) {
     Invoke-InstallerLib "Setting the $($agent.Name) model" set-agent-model (Join-Path $agentsDir $agent.Name) $models[$agent.Name]

@@ -915,7 +915,7 @@ describe("OpenUltraCode workflow lifecycle in OpenCode 2", () => {
     const agents = join(projectRoot, ".opencode", "agents")
     await mkdir(agents, { recursive: true })
     for (const name of ["ultracode-fusion-panel-a.md", "ultracode-fusion-panel-b.md", "ultracode-fusion-arbiter.md"]) {
-      await writeFile(join(agents, name), await readFile(join(process.cwd(), ".opencode", "agents", name), "utf8"))
+      await writeFile(join(agents, name), await readFile(join(process.cwd(), "assets", "agents", name), "utf8"))
     }
     const ctx = await setupPlugin(projectRoot, { enabled: true })
     const panelA = join(agents, "ultracode-fusion-panel-a.md")

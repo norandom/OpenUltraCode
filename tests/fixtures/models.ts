@@ -57,7 +57,7 @@ export const absentProviderModel = `${providers.absent}/some-model`
 /** The fusion defaults the repository ships, read from its agent files (never typed in). */
 export function shippedFusionDefaults(repoRoot = process.cwd()): Record<"panelA" | "panelB" | "decider", string> {
   const read = (file: string) => {
-    const model = getAgentModel(join(repoRoot, ".opencode", "agents", file))
+    const model = getAgentModel(join(repoRoot, "assets", "agents", file))
     if (model === undefined) throw new Error(`${file} ships no model`)
     return model
   }

@@ -17,7 +17,7 @@ const requiredScaffoldPaths = [
   ".opencode/lib",
   ".opencode/lib/fusion-config.ts",
   ".opencode/skills/open-ultracode",
-  ".opencode/agents",
+  "assets/agents",
   ".opencode/commands",
   "docs",
   "tests",
@@ -53,6 +53,11 @@ describe("OpenUltraCode scaffold", () => {
     assert.equal(result.ok, true, result.errors.join("\n"))
   })
 
+  it("keeps shipped agents out of the folder opencode loads, so a checkout never shadows the user's agents", () => {
+    assert.equal(existsSync(join(projectRoot, ".opencode", "agents")), false)
+    assert.ok(existsSync(join(projectRoot, "assets", "agents", "ultracode-fusion-panel-a.md")))
+  })
+
   it("exposes an installable opencode project layout without model routing", () => {
     const config = readJson(join(projectRoot, "opencode.json"))
     const manifest = readJson(join(projectRoot, "package.json"))
@@ -75,7 +80,7 @@ describe("OpenUltraCode scaffold", () => {
     assert.equal("model" in config, false)
     assert.equal("provider" in config, false)
     assert.equal(manifest.packageManager, "pnpm@11.4.0")
-    assert.equal(manifest.version, "2.0.0")
+    assert.equal(manifest.version, "2.0.1")
     // One offline quality gate shared by the pre-commit hook, CI, and install-dev; Docker is optional.
     assert.equal(scripts.lint, "eslint .")
     assert.equal(scripts["lint:container"], "dagger call lint --source .")
@@ -144,7 +149,7 @@ describe("OpenUltraCode scaffold", () => {
       commandAsset("Run comprehensive workflow", "comprehensive", `model: ${ref(models.withMax)}`)
     )
     writeFileSync(
-      join(root, ".opencode/agents/open-ultracode.md"),
+      join(root, "assets/agents/open-ultracode.md"),
       agentAsset("Coordinator", `model: ${ref(models.withMax)}`)
     )
 
@@ -181,11 +186,11 @@ describe("OpenUltraCode scaffold", () => {
   it("allows model frontmatter only for approved fusion agents", () => {
     const root = createAssetFixture()
     writeFileSync(
-      join(root, ".opencode/agents/ultracode-fusion-panel-a.md"),
+      join(root, "assets/agents/ultracode-fusion-panel-a.md"),
       fusionAgentAsset("Fusion panel A", ref(models.otherFamilyWithMax))
     )
     writeFileSync(
-      join(root, ".opencode/agents/not-fusion.md"),
+      join(root, "assets/agents/not-fusion.md"),
       agentAsset("Unexpected model", `model: ${ref(models.otherFamilyWithMax)}\npermission:\n  edit: deny\n  bash: deny`)
     )
 
@@ -199,7 +204,7 @@ describe("OpenUltraCode scaffold", () => {
   it("rejects unsafe agent permissions", () => {
     const root = createAssetFixture()
     writeFileSync(
-      join(root, ".opencode/agents/open-ultracode-implementer.md"),
+      join(root, "assets/agents/open-ultracode-implementer.md"),
       agentAsset("Implementer", "permission:\n  edit: allow\n  bash: ask")
     )
 
@@ -211,7 +216,7 @@ describe("OpenUltraCode scaffold", () => {
 
   it("rejects top-level allow-all agent permissions", () => {
     const root = createAssetFixture()
-    writeFileSync(join(root, ".opencode/agents/open-ultracode.md"), agentAsset("Coordinator", "permission: allow"))
+    writeFileSync(join(root, "assets/agents/open-ultracode.md"), agentAsset("Coordinator", "permission: allow"))
 
     const result = validateAssets(root)
 
@@ -228,7 +233,7 @@ function createAssetFixture(): string {
     ".opencode/plugins/open-ultracode",
     ".opencode/lib",
     ".opencode/skills/open-ultracode",
-    ".opencode/agents",
+    "assets/agents",
     ".opencode/commands",
     "docs",
     "tests",
@@ -310,14 +315,14 @@ updates:
     ["open-ultracode-verifier.md", "Verifier"],
     ["open-ultracode-researcher.md", "Researcher"]
   ] as const) {
-    writeFileSync(join(root, ".opencode/agents", agent[0]), agentAsset(agent[1]))
+    writeFileSync(join(root, "assets/agents", agent[0]), agentAsset(agent[1]))
   }
   for (const agent of [
     ["ultracode-fusion-panel-a.md", "Fusion panel A", "provider/model-a"],
     ["ultracode-fusion-panel-b.md", "Fusion panel B", "provider/model-b"],
     ["ultracode-fusion-arbiter.md", "Fusion arbiter", "provider/arbiter-model"]
   ] as const) {
-    writeFileSync(join(root, ".opencode/agents", agent[0]), fusionAgentAsset(agent[1], agent[2]))
+    writeFileSync(join(root, "assets/agents", agent[0]), fusionAgentAsset(agent[1], agent[2]))
   }
   return root
 }

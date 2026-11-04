@@ -331,8 +331,10 @@ export function installSummary({ configDir, sourceDir }) {
   const entries = [...(Array.isArray(config.plugins) ? config.plugins : []), ...(Array.isArray(config.plugin) ? config.plugin : [])]
     .filter(isOpenUltraCodePluginEntry)
     .map((entry) => (typeof entry === "string" ? entry : entry.package))
-  const shipped = (kind) => fs.existsSync(path.join(sourceDir, ".opencode", kind))
-    ? fs.readdirSync(path.join(sourceDir, ".opencode", kind)).filter((name) => name.endsWith(".md") && fs.existsSync(path.join(configDir, kind, name)))
+  // Shipped agents live outside .opencode so they never shadow the user's agents in this repository.
+  const shippedDir = (kind) => path.join(sourceDir, kind === "agents" ? "assets" : ".opencode", kind)
+  const shipped = (kind) => fs.existsSync(shippedDir(kind))
+    ? fs.readdirSync(shippedDir(kind)).filter((name) => name.endsWith(".md") && fs.existsSync(path.join(configDir, kind, name)))
     : []
   const commands = shipped("commands").map((name) => `/${name.replace(/\.md$/u, "")}`)
 

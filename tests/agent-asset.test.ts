@@ -50,7 +50,7 @@ const agentExpectations: readonly AgentExpectation[] = [
 const fusionAgentFiles = ["ultracode-fusion-panel-a.md", "ultracode-fusion-panel-b.md", "ultracode-fusion-arbiter.md"] as const
 
 function readAgent(file: string): string {
-  return readFileSync(join(process.cwd(), ".opencode/agents", file), "utf8")
+  return readFileSync(join(process.cwd(), "assets/agents", file), "utf8")
 }
 
 describe("OpenUltraCode agent assets", () => {

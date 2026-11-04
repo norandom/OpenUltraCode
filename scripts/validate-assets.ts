@@ -33,7 +33,7 @@ const requiredScaffoldPaths = [
   ".opencode/lib",
   ".opencode/lib/fusion-config.ts",
   ".opencode/skills/open-ultracode",
-  ".opencode/agents",
+  "assets/agents",
   ".opencode/commands",
   "docs",
   "tests",
@@ -237,7 +237,7 @@ function validateImmutableActionReferences(relativePath: string, content: string
 
 function validateAgents(root: string, errors: string[]): void {
   for (const fileName of requiredAgentAssets) {
-    const relativePath = `.opencode/agents/${fileName}`
+    const relativePath = `assets/agents/${fileName}`
     const document = readFrontmatter(root, relativePath, errors)
     if (document === undefined) continue
 
@@ -263,7 +263,7 @@ function validateAgents(root: string, errors: string[]): void {
     if (requiredAgentAssets.includes(fileName as (typeof requiredAgentAssets)[number]) || fusionAgentPattern.test(fileName)) {
       continue
     }
-    const relativePath = `.opencode/agents/${fileName}`
+    const relativePath = `assets/agents/${fileName}`
     const document = readFrontmatter(root, relativePath, errors)
     if (document !== undefined) {
       rejectModelOverride(relativePath, document, errors)
@@ -296,12 +296,12 @@ function validateFusionAgentOptions(relativePath: string, document: FrontmatterD
 }
 
 function listAgentMarkdownFiles(root: string, errors: string[]): readonly string[] {
-  const agentsPath = join(root, ".opencode/agents")
+  const agentsPath = join(root, "assets/agents")
   if (!existsSync(agentsPath)) return []
   try {
     return readdirSync(agentsPath).filter((fileName) => fileName.endsWith(".md"))
   } catch (error) {
-    errors.push(`.opencode/agents could not be read: ${error instanceof Error ? error.message : String(error)}`)
+    errors.push(`assets/agents could not be read: ${error instanceof Error ? error.message : String(error)}`)
     return []
   }
 }

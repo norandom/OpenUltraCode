@@ -180,7 +180,7 @@ remove_legacy_global_files() {
 
 install_global_assets() {
   source_dir="$1"
-  resolve_fusion_models "$source_dir/.opencode/agents"
+  resolve_fusion_models "$source_dir/assets/agents"
 
   mkdir -p "$OPENCODE_CONFIG_DIR/skills" "$OPENCODE_CONFIG_DIR/commands" "$OPENCODE_CONFIG_DIR/agents"
   rm -rf "$OPENCODE_CONFIG_DIR/skills/open-ultracode"
@@ -189,7 +189,7 @@ install_global_assets() {
     cp "$source_dir/.opencode/commands/$name" "$OPENCODE_CONFIG_DIR/commands/$name"
   done
   for name in $SHIPPED_AGENTS; do
-    cp "$source_dir/.opencode/agents/$name" "$OPENCODE_CONFIG_DIR/agents/$name"
+    cp "$source_dir/assets/agents/$name" "$OPENCODE_CONFIG_DIR/agents/$name"
   done
   for agent in $FUSION_AGENTS; do
     lib set-agent-model "$OPENCODE_CONFIG_DIR/agents/$agent" "$(model_for "$agent")"
