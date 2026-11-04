@@ -259,4 +259,6 @@ done
 install_latest_release
 install_global_assets "$INSTALL_DIR"
 
-echo "OpenUltraCode is installed globally for opencode. Restart opencode to load the plugin, commands, skills, and agents."
+# Show what is actually installed, read back from disk.
+echo
+lib summary --config-dir "$OPENCODE_CONFIG_DIR" --source-dir "$INSTALL_DIR"

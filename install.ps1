@@ -372,4 +372,6 @@ foreach ($entry in $overrides.GetEnumerator()) {
 Install-LatestRelease
 Install-GlobalAssets $InstallDir $overrides
 
-Write-Host "OpenUltraCode is installed globally for opencode. Restart opencode to load the plugin, commands, skills, and agents."
+# Show what is actually installed, read back from disk.
+Write-Host ""
+Invoke-InstallerLib "Summarizing the installation" summary "--config-dir" $OpenCodeConfigDir "--source-dir" $InstallDir | ForEach-Object { Write-Host $_ }

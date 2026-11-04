@@ -17,41 +17,57 @@ FUSION_AGENTS="ultracode-fusion-panel-a.md ultracode-fusion-panel-b.md ultracode
 
 usage() {
   cat <<'USAGE'
-Usage: install-dev.sh [--remove] [--non-interactive] [--skip-checks] [-h|--help]
+Usage: install-dev.sh [options]
 
 Installs OpenUltraCode for opencode from this checkout.
 Options:
   -remove, --remove, -r   Remove OpenUltraCode from opencode instead of installing.
   --non-interactive       Do not prompt; keep installed fusion models or use the shipped defaults.
+  --panel-a <model>       Fusion panel A model (provider/model or provider/model#max).
+  --panel-b <model>       Fusion panel B model.
+  --decider <model>       Fusion arbiter model.
   --skip-checks           Skip pnpm install and pnpm run check.
   -h, --help              Show this help.
 USAGE
 }
 
+fail() {
+  echo "OpenUltraCode: $*" >&2
+  exit 1
+}
+
 REMOVE=0
 NON_INTERACTIVE=0
 SKIP_CHECKS=0
-for arg in "$@"; do
-  case "$arg" in
+PANEL_A=""
+PANEL_B=""
+DECIDER=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
     -remove|--remove|-r) REMOVE=1 ;;
     --non-interactive) NON_INTERACTIVE=1 ;;
     --skip-checks) SKIP_CHECKS=1 ;;
+    --panel-a|--panel-b|--decider)
+      [ "$#" -ge 2 ] || fail "$1 needs a value"
+      case "$1" in
+        --panel-a) PANEL_A="$2" ;;
+        --panel-b) PANEL_B="$2" ;;
+        --decider) DECIDER="$2" ;;
+      esac
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
       ;;
     *)
-      echo "Unknown option: $arg" >&2
+      echo "Unknown option: $1" >&2
       usage >&2
       exit 1
       ;;
   esac
+  shift
 done
-
-fail() {
-  echo "OpenUltraCode: $*" >&2
-  exit 1
-}
 
 lib() {
   node "$INSTALLER_LIB" "$@"
@@ -65,6 +81,14 @@ detect_opencode_models() {
 
 has_tty() {
   [ "$NON_INTERACTIVE" -eq 0 ] && (: </dev/tty >/dev/tty) 2>/dev/null
+}
+
+agent_override() {
+  case "$1" in
+    ultracode-fusion-panel-a.md) printf '%s' "$PANEL_A" ;;
+    ultracode-fusion-panel-b.md) printf '%s' "$PANEL_B" ;;
+    *) printf '%s' "$DECIDER" ;;
+  esac
 }
 
 agent_prompt() {
@@ -97,10 +121,13 @@ resolve_fusion_models() {
     DETECTED_MODELS=$(detect_opencode_models)
   fi
   for agent in $FUSION_AGENTS; do
-    default_model=$(lib get-agent-model "$source_agents/$agent") || exit $?
-    [ -n "$default_model" ] || fail "shipped agent $agent has no default model"
-    current_model=$(lib get-agent-model "$OPENCODE_CONFIG_DIR/agents/$agent") || exit $?
-    model=$(choose_model "$(agent_prompt "$agent")" "${current_model:-$default_model}") || exit $?
+    model=$(agent_override "$agent")
+    if [ -z "$model" ]; then
+      default_model=$(lib get-agent-model "$source_agents/$agent") || exit $?
+      [ -n "$default_model" ] || fail "shipped agent $agent has no default model"
+      current_model=$(lib get-agent-model "$OPENCODE_CONFIG_DIR/agents/$agent") || exit $?
+      model=$(choose_model "$(agent_prompt "$agent")" "${current_model:-$default_model}") || exit $?
+    fi
     lib validate-model "$model"
     RESOLVED_MODELS="$RESOLVED_MODELS $agent=$model"
   done
@@ -177,6 +204,12 @@ if [ "$REMOVE" -eq 1 ]; then
   exit 0
 fi
 
+for model in "$PANEL_A" "$PANEL_B" "$DECIDER"; do
+  if [ -n "$model" ]; then
+    lib validate-model "$model"
+  fi
+done
+
 if [ "$SKIP_CHECKS" -eq 0 ]; then
   ensure_pnpm
   pnpm install --frozen-lockfile
@@ -185,4 +218,6 @@ fi
 install_global_assets "$REPO_ROOT"
 enable_git_hooks
 
-echo "OpenUltraCode is installed globally for opencode from this checkout. Restart opencode to load the plugin, commands, skills, and agents."
+# Show what is actually installed, read back from disk.
+echo
+lib summary --config-dir "$OPENCODE_CONFIG_DIR" --source-dir "$REPO_ROOT"

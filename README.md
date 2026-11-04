@@ -37,7 +37,17 @@ How the installers treat your configuration:
 - All fusion models are chosen before any file is copied, so cancelling the menu (Ctrl+C, Esc) changes nothing. Without a terminal (CI, `--non-interactive` / `-NonInteractive`) the installed models are kept, or the shipped defaults are used.
 - Every step that fails stops the installer with a non-zero exit code; it never reports success after a failed check.
 
-Installer options: `--non-interactive`, `--panel-a`/`--panel-b`/`--decider <provider/model>`, and `--archive <file>` for an offline install from a downloaded `open-ultracode-release.tar.gz` (PowerShell: `-NonInteractive`, `-PanelA`/`-PanelB`/`-Decider`, `-Archive`).
+Installer options: `--non-interactive`, `--panel-a`/`--panel-b`/`--decider <provider/model>`, and `--archive <file>` for an offline install from a downloaded `open-ultracode-release.tar.gz` (PowerShell: `-NonInteractive`, `-PanelA`/`-PanelB`/`-Decider`, `-Archive`). The development installers accept the same model flags. For a batch install, pass all three models with `--non-interactive`, for example:
+
+```sh
+./install.sh --non-interactive --panel-a vibe-oidc/mistral-large-4 --panel-b vibe-oidc/zai-glm-5-3 --decider vibe-oidc/mistral-large-4
+```
+
+```powershell
+.\install.ps1 -NonInteractive -PanelA vibe-oidc/mistral-large-4 -PanelB vibe-oidc/zai-glm-5-3 -Decider vibe-oidc/mistral-large-4
+```
+
+Every installer ends with a summary of what is actually installed, read back from disk: the version, the registered plugin entry, the opencode config file, the three fusion models, and the installed commands and agents.
 
 ### Development install
 

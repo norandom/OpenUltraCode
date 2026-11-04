@@ -104,6 +104,27 @@ for (const shell of powershells) {
       assert.deepEqual(readdirSync(join(configDir, "agents")), ["ultracode-fusion-custom.md"])
     })
 
+    it("sets every fusion model from batch flags in the dev installer and rejects a bad one before any change", () => {
+      const configDir = seedConfigDir()
+
+      assertOk(
+        run("install-dev.ps1", "-SkipChecks", "-NonInteractive", "-OpenCodeConfigDir", configDir, "-PanelA", "vibe-oidc/mistral-large-4", "-PanelB", "vibe-oidc/zai-glm-5-3#max", "-Decider", "openai/gpt-x"),
+        "install-dev.ps1 with model flags"
+      )
+      assert.deepEqual(
+        ["ultracode-fusion-panel-a.md", "ultracode-fusion-panel-b.md", "ultracode-fusion-arbiter.md"].map((agent) => agentModel(configDir, agent)),
+        ["vibe-oidc/mistral-large-4", "vibe-oidc/zai-glm-5-3", "openai/gpt-x"]
+      )
+
+      const before = readFileSync(join(configDir, "opencode.json"), "utf8")
+      // Without -SkipChecks: an invalid model must fail before pnpm install/check run.
+      const bad = run("install-dev.ps1", "-NonInteractive", "-OpenCodeConfigDir", configDir, "-Decider", "not a model")
+      assert.notEqual(bad.status, 0)
+      assert.match(`${bad.stdout}${bad.stderr}`, /must be provider\/model/u)
+      assert.doesNotMatch(bad.stdout, /pnpm/u)
+      assert.equal(readFileSync(join(configDir, "opencode.json"), "utf8"), before)
+    })
+
     it("installs a release archive over a dev install and rejects bad input without changes", () => {
       const configDir = seedConfigDir()
       const installDir = join(tempDir("home"), "open-ultracode")
@@ -161,7 +182,8 @@ describe("sh installers", { skip: !runShTests && "set OPENULTRACODE_E2E_SH=1 to 
     const configDir = seedConfigDir()
     const installDir = join(home, "open-ultracode")
 
-    assertOk(run("install-dev.sh", configDir, installDir, "--skip-checks", "--non-interactive"), "install-dev.sh")
+    assertOk(run("install-dev.sh", configDir, installDir, "--skip-checks", "--non-interactive", "--panel-b", "vibe-oidc/zai-glm-5-3"), "install-dev.sh")
+    assert.equal(agentModel(configDir, "ultracode-fusion-panel-b.md"), "vibe-oidc/zai-glm-5-3")
     assertOk(run("install.sh", configDir, installDir, "--non-interactive", "--archive", releaseArchive(), "--decider", "openai/gpt-x"), "install.sh")
     assertOk(run("install.sh", configDir, installDir, "--non-interactive", "--archive", releaseArchive()), "second install.sh")
 

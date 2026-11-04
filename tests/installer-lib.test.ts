@@ -1,4 +1,4 @@
-import { cpSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
 import { spawnSync } from "node:child_process"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
@@ -8,6 +8,7 @@ import assert from "node:assert/strict"
 import {
   configuredModels,
   getAgentModel,
+  installSummary,
   listModels,
   orderModels,
   parseModelList,
@@ -194,6 +195,32 @@ describe("installer agent model editing", () => {
 
     assert.throws(() => setAgentModel(file, "not a model"), /must be provider\/model/u)
     assert.equal(readFileSync(file, "utf8"), "---\nmodel: a/b\n---\n")
+  })
+})
+
+describe("installer summary", () => {
+  it("reports the installed plugin entry, fusion models, and assets as found on disk", () => {
+    const source = configDir({ "package.json": JSON.stringify({ version: "9.9.9" }) })
+    const target = configDir()
+    for (const [kind, names] of [["commands", ["ultracode.md", "ultrathink.md"]], ["agents", ["ultracode-fusion-panel-a.md", "ultracode-fusion-panel-b.md", "ultracode-fusion-arbiter.md"]]] as const) {
+      for (const directory of [source, target]) {
+        mkdirSync(join(directory, ".opencode", kind), { recursive: true })
+        mkdirSync(join(target, kind), { recursive: true })
+        for (const name of names) writeFileSync(join(directory, ".opencode", kind, name), "---\nmodel: a/b\n---\n")
+      }
+      for (const name of names) writeFileSync(join(target, kind, name), "---\nmodel: a/b\n---\n")
+    }
+    setAgentModel(join(target, "agents", "ultracode-fusion-panel-a.md"), "vibe-oidc/mistral-large-4#max")
+    registerPlugin({ configDir: target, pluginPath: join(source, ".opencode", "plugins", "open-ultracode") })
+
+    const summary = installSummary({ configDir: target, sourceDir: source }).join("\n")
+
+    assert.match(summary, /^OpenUltraCode 9\.9\.9 installed$/mu)
+    assert.match(summary, /Plugin entry: {4}\S+\/\.opencode\/plugins\/open-ultracode$/mu)
+    assert.match(summary, /Fusion panel A: {2}vibe-oidc\/mistral-large-4 \(variant max\)$/mu)
+    assert.match(summary, /Fusion arbiter: {2}a\/b \(variant max\)$/mu)
+    assert.match(summary, /Commands: {8}\/ultracode \/ultrathink$/mu)
+    assert.match(summary, /Agents: {10}3 installed/mu)
   })
 })
 

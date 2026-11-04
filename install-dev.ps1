@@ -1,6 +1,9 @@
 [CmdletBinding()]
 param(
   [string]$OpenCodeConfigDir = $env:OPENCODE_CONFIG_DIR,
+  [string]$PanelA,
+  [string]$PanelB,
+  [string]$Decider,
   [switch]$NonInteractive,
   [switch]$SkipChecks,
   [switch]$Remove
@@ -299,6 +302,16 @@ if ($Remove) {
   return
 }
 
+# Validate model overrides before the slow checks so a typo fails immediately.
+$overrides = @{
+  "ultracode-fusion-panel-a.md" = $PanelA
+  "ultracode-fusion-panel-b.md" = $PanelB
+  "ultracode-fusion-arbiter.md" = $Decider
+}
+foreach ($entry in $overrides.GetEnumerator()) {
+  if ($entry.Value) { Assert-ModelId $entry.Value $entry.Key }
+}
+
 if (-not (Get-Command pnpm -ErrorAction SilentlyContinue) -and (Get-Command corepack -ErrorAction SilentlyContinue)) {
   try { Invoke-Native "corepack enable" { corepack enable } } catch { Write-Warning $_ }
 }
@@ -312,9 +325,11 @@ try {
     Invoke-Native "pnpm install" { pnpm install --frozen-lockfile }
     Invoke-Native "pnpm run check" { pnpm run check }
   }
-  Install-GlobalAssets $repoRoot @{}
+  Install-GlobalAssets $repoRoot $overrides
   Enable-GitHooks
-  Write-Host "OpenUltraCode is installed globally for opencode from this checkout. Restart opencode to load the plugin, commands, skills, and agents."
+  # Show what is actually installed, read back from disk.
+  Write-Host ""
+  Invoke-InstallerLib "Summarizing the installation" summary "--config-dir" $OpenCodeConfigDir "--source-dir" $repoRoot | ForEach-Object { Write-Host $_ }
 } finally {
   Pop-Location
 }

@@ -49,6 +49,19 @@ const rules: ReadonlyArray<{ readonly applies: readonly string[]; readonly test:
   },
   {
     applies: allInstallers,
+    test: (content) => /summary "?--config-dir"?/u.test(content),
+    message: "must end with the installer-lib summary of what was installed (plugin entry, fusion models, assets)"
+  },
+  {
+    applies: allInstallers,
+    // Batch installs choose every fusion model without the interactive menu.
+    test: (content) =>
+      (/--panel-a\)/u.test(content) && /--panel-b\)/u.test(content) && /--decider\)/u.test(content) && /--non-interactive\)/u.test(content)) ||
+      (/\[string\]\$PanelA/u.test(content) && /\[string\]\$PanelB/u.test(content) && /\[string\]\$Decider/u.test(content) && /\[switch\]\$NonInteractive/u.test(content)),
+    message: "must accept --panel-a/--panel-b/--decider/--non-interactive (PowerShell: -PanelA/-PanelB/-Decider/-NonInteractive) for batch installs"
+  },
+  {
+    applies: allInstallers,
     test: (content) => !/\.opencode[/\\]tools|open_ultracode_configure_fusion\.ts"? -Destination|cp [^\n]*open_ultracode_configure_fusion\.ts/u.test(content.replace(/^.*(?:rm -f|Remove-Item).*$/gmu, "")),
     message: "must not install .opencode/tools (OpenCode 2 does not load it; the plugin registers the fusion tool)"
   },

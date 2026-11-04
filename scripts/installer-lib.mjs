@@ -10,6 +10,7 @@
 //   node scripts/installer-lib.mjs set-agent-model <agent.md> <provider/model[#max]>
 //   node scripts/installer-lib.mjs validate-model <provider/model[#max]>
 //   node scripts/installer-lib.mjs list-models --config-dir <dir>
+//   node scripts/installer-lib.mjs summary --config-dir <dir> --source-dir <dir>
 
 import { spawnSync } from "node:child_process"
 import fs, { realpathSync } from "node:fs"
@@ -294,6 +295,45 @@ export function listModels({ configDir, run = runOpencodeModels, attempts = 3, d
   return orderModels([...configured, ...detected])
 }
 
+const fusionRoles = [
+  ["Fusion panel A", "ultracode-fusion-panel-a.md"],
+  ["Fusion panel B", "ultracode-fusion-panel-b.md"],
+  ["Fusion arbiter", "ultracode-fusion-arbiter.md"]
+]
+
+/**
+ * Describes what is installed, read back from disk after the install, so the summary shows
+ * the real result (registered plugin entry, fusion models, assets) rather than the intent.
+ */
+export function installSummary({ configDir, sourceDir }) {
+  let version = "unknown"
+  try {
+    version = JSON.parse(fs.readFileSync(path.join(sourceDir, "package.json"), "utf8")).version ?? version
+  } catch {
+    // Keep "unknown"; the rest of the summary is still accurate.
+  }
+  const configFile = path.join(configDir, "opencode.json")
+  const config = readConfig(configFile) ?? {}
+  const entries = [...(Array.isArray(config.plugins) ? config.plugins : []), ...(Array.isArray(config.plugin) ? config.plugin : [])]
+    .filter(isOpenUltraCodePluginEntry)
+    .map((entry) => (typeof entry === "string" ? entry : entry.package))
+  const shipped = (kind) => fs.existsSync(path.join(sourceDir, ".opencode", kind))
+    ? fs.readdirSync(path.join(sourceDir, ".opencode", kind)).filter((name) => name.endsWith(".md") && fs.existsSync(path.join(configDir, kind, name)))
+    : []
+  const commands = shipped("commands").map((name) => `/${name.replace(/\.md$/u, "")}`)
+
+  return [
+    `OpenUltraCode ${version} installed`,
+    `  Source:          ${sourceDir}`,
+    `  Plugin entry:    ${entries.length === 1 ? entries[0] : `${entries.length} entries (expected 1): ${entries.join(", ")}`}`,
+    `  OpenCode config: ${configFile}`,
+    ...fusionRoles.map(([label, file]) => `  ${`${label}:`.padEnd(16)} ${getAgentModel(path.join(configDir, "agents", file))?.replace(/#max$/u, " (variant max)") ?? "not set"}`),
+    `  Commands:        ${commands.length > 0 ? commands.join(" ") : "none"}`,
+    `  Agents:          ${shipped("agents").length} installed in ${path.join(configDir, "agents")}`,
+    "Restart opencode to load the plugin, commands, skills, and agents."
+  ]
+}
+
 function readOption(args, name) {
   const index = args.indexOf(name)
   const value = index === -1 ? undefined : args[index + 1]
@@ -320,6 +360,9 @@ export function main(argv, log = console.log) {
       return
     case "validate-model":
       assertModelId(args[0])
+      return
+    case "summary":
+      for (const line of installSummary({ configDir: readOption(args, "--config-dir"), sourceDir: readOption(args, "--source-dir") })) log(line)
       return
     case "list-models":
       for (const model of listModels({ configDir: readOption(args, "--config-dir") })) log(model)
