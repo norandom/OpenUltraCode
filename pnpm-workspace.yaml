@@ -5,3 +5,9 @@ overrides:
   brace-expansion@1: 1.1.21
   brace-expansion: 5.0.12
   js-yaml: 4.3.2
+  # GHSA-g3hv-75wg-m249 (ReDoS) is fixed only in minimatch >= 11.0.1. Every remaining
+  # consumer (eslint 10, glob 10, @npmcli/*) uses the named-export API that 11 keeps.
+  minimatch: 11.0.3
+  # GHSA-3g3m-2fjr-6pw4 is fixed in glob >= 14.0.2; only @opencode/plugin's transitive
+  # dependencies use glob, and this project uses that package for types only.
+  glob: 14.0.3
