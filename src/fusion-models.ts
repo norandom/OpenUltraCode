@@ -16,6 +16,9 @@ export interface FusionModelIssue {
 
 const maxAlternatives = 4
 
+/** Providers of opencode's own hosted catalog; the user's providers are preferred over them. */
+const catalogProviders = new Set(["opencode", "opencode-go"])
+
 /**
  * Compares fusion model references with opencode's model list and proposes valid replacements
  * from the same provider. opencode refuses to start an agent whose model or variant it does
@@ -32,7 +35,14 @@ export function analyzeFusionModels(
     if (parsed === undefined) continue
     const providerModels = models.filter((model) => model.providerID === parsed.provider)
     if (providerModels.length === 0) {
-      issues.push({ role, reference, problem: "provider-unavailable", variants: [], alternatives: [] })
+      // The same model is often offered by another configured provider (for example
+      // mistral/mistral-large-4 as vibe-oidc/mistral-large-4); the user's own providers come
+      // before opencode's hosted catalog.
+      const sameModel = models
+        .filter((model) => model.id === parsed.model || model.modelID === parsed.model)
+        .sort((a, b) => Number(catalogProviders.has(a.providerID)) - Number(catalogProviders.has(b.providerID)) || a.providerID.localeCompare(b.providerID))
+        .map((model) => referenceFor(model, parsed.variant))
+      issues.push({ role, reference, problem: "provider-unavailable", variants: [], ...firstAsFallback(sameModel) })
       continue
     }
 

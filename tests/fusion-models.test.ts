@@ -45,11 +45,21 @@ describe("fusion model fallbacks", () => {
     assert.match(describeFusionModelIssue(issue!), /Fusion arbiter .* does not list this model for provider vibe-oidc.* Fix: \/ultracode-fusion-models --decider vibe-oidc\/mistral-large-4#max\./u)
   })
 
-  it("reports a provider that opencode does not offer without inventing a replacement", () => {
+  it("offers the same model from another configured provider when the provider is unavailable", () => {
+    // Captured: the repository's shipped agents name mistral/mistral-large-4#max, but this machine
+    // has no "mistral" provider; vibe-oidc offers the same model with a max variant.
     const [issue] = analyzeFusionModels(models, { panelB: "mistral/mistral-large-4#max" })
 
     assert.equal(issue?.problem, "provider-unavailable")
+    assert.equal(issue?.fallback, "vibe-oidc/mistral-large-4#max")
+    assert.match(describeFusionModelIssue(issue!), /provider mistral is not available in opencode right now .*Suggested fallback: vibe-oidc\/mistral-large-4#max/u)
+  })
+
+  it("reports an unavailable provider without inventing a replacement when no provider offers the model", () => {
+    const [issue] = analyzeFusionModels(models, { panelB: "absent/model-x" })
+
+    assert.equal(issue?.problem, "provider-unavailable")
     assert.equal(issue?.fallback, undefined)
-    assert.match(describeFusionModelIssue(issue!), /provider mistral is not available in opencode right now .*restart.*No valid replacement/u)
+    assert.match(describeFusionModelIssue(issue!), /No valid replacement/u)
   })
 })

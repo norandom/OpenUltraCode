@@ -25,7 +25,11 @@ export const fusionAgents = ["ultracode-fusion-panel-a", "ultracode-fusion-panel
 
 /** Runs the opencode CLI; on Windows it is a .cmd shim, so a shell with a quoted command line is used. */
 function runOpencode(args, { cwd = process.cwd(), timeoutMs = 300_000 } = {}) {
-  const options = { cwd, encoding: "utf8", timeout: timeoutMs, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024 }
+  // opencode takes its location from $PWD before the real working directory. Git hooks run
+  // under sh, which exports PWD (the repository), so without this every check silently ran in
+  // the repository and used its project agents instead of the installation being checked.
+  const env = { ...process.env, PWD: cwd }
+  const options = { cwd, env, encoding: "utf8", timeout: timeoutMs, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024 }
   const result = process.platform === "win32"
     ? spawnSync(["opencode", ...args.map((arg) => `"${arg.replace(/"/gu, '\\"')}"`)].join(" "), { ...options, shell: true })
     : spawnSync("opencode", args, options)
@@ -51,8 +55,12 @@ export function fetchModelList(run = runOpencode, { attempts = 8, delayMs = 5000
   throw new Error(`opencode api model.list failed: ${last.trim().split("\n")[0]}`)
 }
 
-/** The coordinator model (`model` in opencode.json/jsonc) and the installed fusion agents' references. */
-export function readInstalledModels(configDir) {
+/**
+ * The coordinator model (`model` in opencode.json/jsonc) and the fusion agents' references as
+ * opencode resolves them in `directory`: a project's `.opencode/agents` shadows the global
+ * ones (the repository's shipped defaults shadow a developer's configuration this way).
+ */
+export function readInstalledModels(configDir, directory) {
   let coordinator
   for (const name of ["opencode.json", "opencode.jsonc"]) {
     const file = path.join(configDir, name)
@@ -61,8 +69,14 @@ export function readInstalledModels(configDir) {
       if (typeof config.model === "string") coordinator ??= config.model
     }
   }
-  const agents = Object.fromEntries(fusionAgents.map((agent) => [agent, getAgentModel(path.join(configDir, "agents", `${agent}.md`))]))
-  return { coordinator, agents }
+  const projectAgents = directory === undefined ? undefined : path.join(directory, ".opencode", "agents")
+  const agentFile = (agent) => {
+    const project = projectAgents === undefined ? undefined : path.join(projectAgents, `${agent}.md`)
+    return project !== undefined && fs.existsSync(project) ? project : path.join(configDir, "agents", `${agent}.md`)
+  }
+  const agents = Object.fromEntries(fusionAgents.map((agent) => [agent, getAgentModel(agentFile(agent))]))
+  const sources = Object.fromEntries(fusionAgents.map((agent) => [agent, agentFile(agent)]))
+  return { coordinator, agents, sources }
 }
 
 function splitReference(reference) {
@@ -136,8 +150,8 @@ export function checkSubagentSession(agent, reference, exported) {
   return problems
 }
 
-function liveCheck(installed, log) {
-  const work = mkdtempSync(path.join(os.tmpdir(), "open-ultracode-runtime-"))
+function liveCheck(installed, log, directory) {
+  const work = directory ?? mkdtempSync(path.join(os.tmpdir(), "open-ultracode-runtime-"))
   const prompt = `Use the subagent tool once for each of these agents, one after another: ${fusionAgents.join(", ")}. ` +
     "Give each the prompt: Reply with the single word OK. Do not retry, do not substitute agents or models, and do nothing else."
   log(`Live check: dispatching ${fusionAgents.join(", ")} through opencode (a few tiny model calls)...`)
@@ -167,11 +181,11 @@ function liveCheck(installed, log) {
   return problems
 }
 
-export function runtimeCheck({ configDir, live = false, log = console.log }) {
-  const installed = readInstalledModels(configDir)
+export function runtimeCheck({ configDir, directory, live = false, log = console.log }) {
+  const installed = readInstalledModels(configDir, directory)
   const models = fetchModelList()
   const problems = checkReferences(models, { coordinator: installed.coordinator, ...installed.agents })
-  if (problems.length === 0 && live) problems.push(...liveCheck(installed, log))
+  if (problems.length === 0 && live) problems.push(...liveCheck(installed, log, directory))
   return { installed, problems }
 }
 
@@ -183,11 +197,13 @@ function readOption(args, name, fallback) {
 if (process.argv[1] !== undefined && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   const args = process.argv.slice(2)
   const configDir = readOption(args, "--config-dir", process.env.OPENCODE_CONFIG_DIR ?? path.join(os.homedir(), ".config", "opencode"))
+  const directoryOption = readOption(args, "--directory", undefined)
+  const directory = directoryOption === undefined ? undefined : path.resolve(directoryOption)
   try {
-    const { installed, problems } = runtimeCheck({ configDir, live: args.includes("--live") })
-    console.log(`OpenUltraCode runtime check (${args.includes("--live") ? "static + live" : "static"}):`)
+    const { installed, problems } = runtimeCheck({ configDir, directory, live: args.includes("--live") })
+    console.log(`OpenUltraCode runtime check (${args.includes("--live") ? "static + live" : "static"}${directory === undefined ? "" : ` in ${directory}`}):`)
     console.log(`  coordinator      ${installed.coordinator ?? "not set"}`)
-    for (const agent of fusionAgents) console.log(`  ${agent.padEnd(25)} ${installed.agents[agent] ?? "not set"}`)
+    for (const agent of fusionAgents) console.log(`  ${agent.padEnd(25)} ${installed.agents[agent] ?? "not set"}   (${installed.sources[agent]})`)
     if (problems.length === 0) {
       console.log("  result: OK")
     } else {
