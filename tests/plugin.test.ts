@@ -16,6 +16,10 @@ import {
   type VerificationEvidence,
   type WorkflowState
 } from "../src/index.js"
+import { absentProviderModel, modelList, models, providers, ref } from "./fixtures/models.js"
+
+const asEvent = (model: { providerID: string; id: string }) => ({ providerID: model.providerID, id: model.id })
+const pattern = (text: string) => new RegExp(text.replace(/[.*+?^${}()|[\]\\/]/gu, "\\$&"), "u")
 
 const stateDirectory = ".opencode/open-ultracode/state"
 const stateFile = join(stateDirectory, "workflow-state.json")
@@ -129,13 +133,7 @@ function createFakeContext(directory: string, options: unknown, sessionDirectory
       list() {
         return Promise.resolve({
           data: [
-            { id: "small-model", providerID: "acme", limit: { output: 8192 }, variants: [{ id: "high" }] },
-            { id: "mistral-large-4", providerID: "mistral", limit: { output: 262144 }, variants: [{ id: "high" }, { id: "max" }] },
-            // As opencode 2.2.5 reports them for the vibe-oidc provider.
-            { id: "mistral-large-4", providerID: "vibe-oidc", limit: { output: 256000 }, variants: [{ id: "low" }, { id: "high" }, { id: "max" }] },
-            { id: "zai-glm-5-3", providerID: "vibe-oidc", limit: { output: 131072 }, variants: [{ id: "low" }, { id: "high" }, { id: "max" }] },
-            { id: "mistral-large-latest", providerID: "vibe-oidc", limit: { output: 256000 }, variants: [] },
-            { id: "mistral-large-2512", providerID: "vibe-oidc", limit: { output: 256000 }, variants: [] }
+            ...modelList
           ]
         })
       }
@@ -265,8 +263,8 @@ describe("OpenUltraCode OpenCode 2 plugin entry point", () => {
         updatedAt: "2026-06-15T19:00:00.000Z",
         state: {
           ...createState(),
-          model: "claude-opus-4",
-          provider: "anthropic",
+          model: "secret-model-id",
+          provider: "secret-provider-id",
           transcript: "secret transcript text",
           unrelatedProjectData: "do not expose"
         }
@@ -279,8 +277,8 @@ describe("OpenUltraCode OpenCode 2 plugin entry point", () => {
     await getSessionHook(ctx, "compaction")(event as never)
 
     const text = event.system.map((part) => part.text).join("\n")
-    assert.doesNotMatch(text, /claude-opus-4/)
-    assert.doesNotMatch(text, /anthropic/)
+    assert.doesNotMatch(text, /secret-model-id/)
+    assert.doesNotMatch(text, /secret-provider-id/)
     assert.doesNotMatch(text, /secret transcript text/)
     assert.doesNotMatch(text, /do not expose/)
     assert.doesNotMatch(text, /^Model:/m)
@@ -327,7 +325,7 @@ describe("OpenUltraCode OpenCode 2 plugin entry point", () => {
       enabled: true,
       highEffort: { enabled: true, effort: "xhigh", outputTokens: 128000 }
     })
-    const event = { options: {}, model: { providerID: "mistral", id: "mistral-large-4" } } as unknown as SessionContextEvent
+    const event = { options: {}, model: asEvent(models.withMax) } as unknown as SessionContextEvent
 
     await getSessionHook(ctx, "context")(event as never)
 
@@ -336,11 +334,11 @@ describe("OpenUltraCode OpenCode 2 plugin entry point", () => {
   })
 
   it("never sends reasoning effort xhigh, which Mistral rejects with 400 Bad Request", async () => {
-    // Captured failure: mistral-large-4 (which offers a "max" variant) with max_tokens 256000
+    // A model declaring low/high/max succeeds with reasoning_effort "high"; providers reject "xhigh".
     // succeeded with reasoning_effort "high" and failed with "xhigh".
     const ctx = await setupPlugin(await createProjectRoot(), { enabled: true })
-    const event = { options: { maxTokens: 256000 }, model: { providerID: "mistral", id: "mistral-large-4" } } as unknown as SessionContextEvent
-    const userChoice = { options: { reasoningEffort: "max" }, model: { providerID: "mistral", id: "mistral-large-4" } } as unknown as SessionContextEvent
+    const event = { options: { maxTokens: 256000 }, model: asEvent(models.withMax) } as unknown as SessionContextEvent
+    const userChoice = { options: { reasoningEffort: "max" }, model: asEvent(models.withMax) } as unknown as SessionContextEvent
 
     await getSessionHook(ctx, "context")(event as never)
     await getSessionHook(ctx, "context")(userChoice as never)
@@ -355,8 +353,8 @@ describe("OpenUltraCode OpenCode 2 plugin entry point", () => {
       enabled: true,
       highEffort: { enabled: true, effort: "xhigh", outputTokens: 128000 }
     })
-    const small = { options: {}, model: { providerID: "acme", id: "small-model" } } as unknown as SessionContextEvent
-    const unknown = { options: {}, model: { providerID: "acme", id: "not-listed" } } as unknown as SessionContextEvent
+    const small = { options: {}, model: asEvent(models.small) } as unknown as SessionContextEvent
+    const unknown = { options: {}, model: { providerID: providers.other, id: "not-listed" } } as unknown as SessionContextEvent
 
     await getSessionHook(ctx, "context")(small as never)
     await getSessionHook(ctx, "context")(unknown as never)
@@ -366,9 +364,9 @@ describe("OpenUltraCode OpenCode 2 plugin entry point", () => {
     assert.deepEqual(unknown.options, { maxTokens: 128000 })
   })
 
-  it("sends no reasoning effort to a model that declares no variants (vibe-oidc/mistral-large-latest)", async () => {
+  it("sends no reasoning effort to a model that declares no variants", async () => {
     const ctx = await setupPlugin(await createProjectRoot(), { enabled: true })
-    const event = { options: { maxTokens: 256000 }, model: { providerID: "vibe-oidc", id: "mistral-large-latest" } } as unknown as SessionContextEvent
+    const event = { options: { maxTokens: 256000 }, model: asEvent(models.noVariants) } as unknown as SessionContextEvent
 
     await getSessionHook(ctx, "context")(event as never)
 
@@ -927,13 +925,13 @@ describe("OpenUltraCode workflow lifecycle in OpenCode 2", () => {
 
     ctx.denyPermissionAsserts = true
     const before = await readFile(panelA, "utf8")
-    await assert.rejects(() => executeTool(ctx, "open_ultracode_configure_fusion", { panelA: "vibe-oidc/mistral-large-latest" }), /denied/u)
+    await assert.rejects(() => executeTool(ctx, "open_ultracode_configure_fusion", { panelA: ref(models.noVariants) }), /denied/u)
     assert.equal(await readFile(panelA, "utf8"), before, "a denied update must not touch agent files")
 
     ctx.denyPermissionAsserts = false
-    await executeTool(ctx, "open_ultracode_configure_fusion", { panelA: "vibe-oidc/mistral-large-latest" })
+    await executeTool(ctx, "open_ultracode_configure_fusion", { panelA: ref(models.noVariants) })
     assert.deepEqual(ctx.permissionAsserts.map((request) => request.action), ["open_ultracode_configure_fusion", "open_ultracode_configure_fusion"])
-    assert.match(await readFile(panelA, "utf8"), /^model: vibe-oidc\/mistral-large-latest$/mu)
+    assert.ok((await readFile(panelA, "utf8")).split(/\r?\n/u).includes(`model: ${ref(models.noVariants)}`))
   })
 
   async function fusionProject(models: { panelA: string; panelB: string; decider: string }): Promise<string> {
@@ -950,21 +948,22 @@ describe("OpenUltraCode workflow lifecycle in OpenCode 2", () => {
   }
 
   it("refuses a fusion variant the model does not declare and accepts declared ones", async () => {
-    const ctx = await setupPlugin(await fusionProject({ panelA: "vibe-oidc/mistral-large-4#max", panelB: "vibe-oidc/zai-glm-5-3#max", decider: "vibe-oidc/mistral-large-4#max" }), { enabled: true })
+    const ctx = await setupPlugin(await fusionProject({ panelA: ref(models.withMax, "max"), panelB: ref(models.otherFamilyWithMax, "max"), decider: ref(models.withMax, "max") }), { enabled: true })
 
     await assert.rejects(
-      () => executeTool(ctx, "open_ultracode_configure_fusion", { panelA: "vibe-oidc/mistral-large-latest#max" }),
-      /Fusion panel A uses vibe-oidc\/mistral-large-latest#max, but opencode reports no "max" variant .*declares no variants.*Suggested fallback: vibe-oidc\/mistral-large-latest.*--panel-a vibe-oidc\/mistral-large-latest\./u
+      () => executeTool(ctx, "open_ultracode_configure_fusion", { panelA: ref(models.noVariants, "max") }),
+      (error: Error) => error.message.includes(`Fusion panel A uses ${ref(models.noVariants, "max")}, but opencode reports no "max" variant`) &&
+        error.message.includes(`Suggested fallback: ${ref(models.noVariants)}`) && error.message.includes(`--panel-a ${ref(models.noVariants)}.`)
     )
     assert.equal(ctx.permissionAsserts.length, 0, "an invalid request must fail before asking for permission")
 
-    await executeTool(ctx, "open_ultracode_configure_fusion", { panelA: "vibe-oidc/mistral-large-latest", panelB: "vibe-oidc/zai-glm-5-3#max" })
+    await executeTool(ctx, "open_ultracode_configure_fusion", { panelA: ref(models.noVariants), panelB: ref(models.otherFamilyWithMax, "max") })
     assert.equal(ctx.permissionAsserts.length, 1)
   })
 
   it("warns before fusion dispatch when a fusion agent selects a variant its model does not declare", async () => {
-    // Captured: "Subagent failed: Variant unavailable for vibe-oidc/mistral-large-latest: max".
-    const projectRoot = await fusionProject({ panelA: "vibe-oidc/mistral-large-latest#max", panelB: "vibe-oidc/zai-glm-5-3#max", decider: "vibe-oidc/mistral-large-2512#max" })
+    // opencode refuses such an agent: "Subagent failed: Variant unavailable for <model>: max".
+    const projectRoot = await fusionProject({ panelA: ref(models.noVariants, "max"), panelB: ref(models.otherFamilyWithMax, "max"), decider: ref(models.noVariantsDated, "max") })
     const ctx = await setupPlugin(projectRoot, { enabled: true })
     const template = await readFile(join(process.cwd(), ".opencode", "commands", "ultrathink-fusion.md"), "utf8")
     const event = { sessionID: "session-1", prompt: { text: template.replace(/^---[\s\S]*?---\r?\n/u, "").replaceAll("$ARGUMENTS", "question") } } as unknown as SessionPromptEvent
@@ -973,43 +972,43 @@ describe("OpenUltraCode workflow lifecycle in OpenCode 2", () => {
     await getSessionHook(ctx, "prompt")(event as never)
 
     assert.equal(event.prompt.text.split("OpenUltraCode fusion check:").length - 1, 1)
-    assert.match(event.prompt.text, /Fusion panel A uses vibe-oidc\/mistral-large-latest#max/u)
-    assert.match(event.prompt.text, /Fusion arbiter uses vibe-oidc\/mistral-large-2512#max/u)
+    assert.match(event.prompt.text, pattern(`Fusion panel A uses ${ref(models.noVariants, "max")}`))
+    assert.match(event.prompt.text, pattern(`Fusion arbiter uses ${ref(models.noVariantsDated, "max")}`))
     assert.doesNotMatch(event.prompt.text, /Fusion panel B uses/u)
     // The coordinator proposes the fallback and asks the user before changing anything.
-    assert.match(event.prompt.text, /Suggested fallback: vibe-oidc\/mistral-large-latest/u)
+    assert.match(event.prompt.text, pattern(`Suggested fallback: ${ref(models.noVariants)}`))
     assert.match(event.prompt.text, /ask the user to confirm it or name another model\. Wait for the answer\./u)
     assert.match(event.prompt.text, /open_ultracode_list_models/u)
     assert.match(event.prompt.text, /cannot be asked .*for this run only .*do not change the fusion configuration/u)
     const status = await executeTool(ctx, "open_ultracode_status", {}) as { degradations: string[] }
     assert.ok(status.degradations.includes("unsupported-fusion-panel-a-model"), status.degradations.join(", "))
 
-    const valid = await setupPlugin(await fusionProject({ panelA: "vibe-oidc/mistral-large-latest", panelB: "vibe-oidc/zai-glm-5-3#max", decider: "vibe-oidc/mistral-large-4#max" }), { enabled: true })
+    const valid = await setupPlugin(await fusionProject({ panelA: ref(models.noVariants), panelB: ref(models.otherFamilyWithMax, "max"), decider: ref(models.withMax, "max") }), { enabled: true })
     const clean = { sessionID: "session-1", prompt: { text: template.replace(/^---[\s\S]*?---\r?\n/u, "").replaceAll("$ARGUMENTS", "question") } } as unknown as SessionPromptEvent
     await getSessionHook(valid, "prompt")(clean as never)
     assert.doesNotMatch(clean.prompt.text, /OpenUltraCode fusion check:/u)
   })
 
   it("reports an unavailable provider before dispatch and lists valid models per provider", async () => {
-    const projectRoot = await fusionProject({ panelA: "mistral/mistral-large-4#max", panelB: "vibe-oidc/zai-glm-5-3#max", decider: "vibe-oidc/mistral-large-4#max" })
+    // A provider opencode does offer (but not as the user's main provider) must not be flagged.
+    const projectRoot = await fusionProject({ panelA: ref(models.sameModelOtherProvider), panelB: ref(models.otherFamilyWithMax, "max"), decider: ref(models.withMax, "max") })
     const ctx = await setupPlugin(projectRoot, { enabled: true })
     const template = await readFile(join(process.cwd(), ".opencode", "commands", "ultracode-fusion.md"), "utf8")
     const event = { sessionID: "session-1", prompt: { text: template.replace(/^---[\s\S]*?---\r?\n/u, "").replaceAll("$ARGUMENTS", "task") } } as unknown as SessionPromptEvent
 
     await getSessionHook(ctx, "prompt")(event as never)
-    // The fake catalog has a "mistral" provider, so use one it does not have.
-    assert.doesNotMatch(event.prompt.text, /provider mistral is not available/u)
+    assert.doesNotMatch(event.prompt.text, /OpenUltraCode fusion check:/u)
 
-    const missing = await setupPlugin(await fusionProject({ panelA: "absent/model-x", panelB: "vibe-oidc/zai-glm-5-3#max", decider: "vibe-oidc/mistral-large-4#max" }), { enabled: true })
+    const missing = await setupPlugin(await fusionProject({ panelA: absentProviderModel, panelB: ref(models.otherFamilyWithMax, "max"), decider: ref(models.withMax, "max") }), { enabled: true })
     const missingEvent = { sessionID: "session-1", prompt: { text: template.replace(/^---[\s\S]*?---\r?\n/u, "").replaceAll("$ARGUMENTS", "task") } } as unknown as SessionPromptEvent
     await getSessionHook(missing, "prompt")(missingEvent as never)
-    assert.match(missingEvent.prompt.text, /Fusion panel A uses absent\/model-x, but provider absent is not available in opencode right now/u)
+    assert.match(missingEvent.prompt.text, pattern(`Fusion panel A uses ${absentProviderModel}, but provider ${providers.absent} is not available in opencode right now`))
 
-    const listed = await executeTool(ctx, "open_ultracode_list_models", { provider: "vibe-oidc" }) as { available: boolean; providers: Record<string, Array<{ reference: string; maxReference?: string }>> }
+    const listed = await executeTool(ctx, "open_ultracode_list_models", { provider: providers.user }) as { available: boolean; providers: Record<string, Array<{ reference: string; maxReference?: string }>> }
     assert.equal(listed.available, true)
-    assert.deepEqual(Object.keys(listed.providers), ["vibe-oidc"])
-    assert.deepEqual(listed.providers["vibe-oidc"]?.find((model) => model.reference === "vibe-oidc/mistral-large-4"), { reference: "vibe-oidc/mistral-large-4", variants: ["low", "high", "max"], maxReference: "vibe-oidc/mistral-large-4#max" })
-    assert.deepEqual(listed.providers["vibe-oidc"]?.find((model) => model.reference === "vibe-oidc/mistral-large-latest"), { reference: "vibe-oidc/mistral-large-latest", variants: [] })
+    assert.deepEqual(Object.keys(listed.providers), [providers.user])
+    assert.deepEqual(listed.providers[providers.user]?.find((model) => model.reference === ref(models.withMax)), { reference: ref(models.withMax), variants: ["low", "high", "max"], maxReference: ref(models.withMax, "max") })
+    assert.deepEqual(listed.providers[providers.user]?.find((model) => model.reference === ref(models.noVariants)), { reference: ref(models.noVariants), variants: [] })
   })
 
   it("advertises exactly the fields its validators require", async () => {

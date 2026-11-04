@@ -2,6 +2,20 @@ import { readFileSync } from "node:fs"
 import { describe, it } from "node:test"
 import { join } from "node:path"
 import assert from "node:assert/strict"
+import { readFileSync as readShippedFile } from "node:fs"
+import { join as joinPath } from "node:path"
+import { it as itShipped } from "node:test"
+
+import { shippedFusionDefaults } from "./fixtures/models.js"
+
+// The README must document the fusion defaults the repository actually ships (read from the
+// agent files, so the test never names a provider itself).
+itShipped("README documents the shipped fusion defaults", () => {
+  const readme = readShippedFile(joinPath(process.cwd(), "README.md"), "utf8")
+  for (const reference of new Set(Object.values(shippedFusionDefaults()))) {
+    assert.ok(readme.includes(reference), `README.md does not mention the shipped default ${reference}`)
+  }
+})
 
 type DocExpectation = Readonly<{
   file: string
@@ -20,11 +34,6 @@ const docs: readonly DocExpectation[] = [
       /install-dev\.sh/i,
       /latest release/i,
       /GitHub release asset/i,
-      /mistral\/mistral-large-4#max/i,
-      /Mistral Large 4/i,
-      /mistral\/zai-glm-5-3#max/i,
-      /Z\.ai GLM 5\.3/i,
-      /openai\/gpt-5/i,
       /OpenCode 2/i,
       /plugins.*package|package.*plugins/is,
       /\/ultracode-fusion-models/i,

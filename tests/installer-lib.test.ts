@@ -6,6 +6,7 @@ import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 
 import {
+  catalogProviders,
   configuredModels,
   getAgentModel,
   installSummary,
@@ -18,6 +19,10 @@ import {
   setAgentModel,
   unregisterPlugin
 } from "../scripts/installer-lib.mjs"
+import { models, providers, ref } from "./fixtures/models.js"
+
+// opencode's own hosted catalog providers come from the code under test, never from a literal.
+const [catalogA = "", catalogB = ""] = [...catalogProviders]
 
 const libPath = join(process.cwd(), "scripts", "installer-lib.mjs")
 const devPlugin = join(tmpdir(), "checkout", ".opencode", "plugins", "open-ultracode")
@@ -49,7 +54,7 @@ function backups(dir: string): string[] {
 
 const foreignConfig = {
   $schema: "https://opencode.ai/config.json",
-  model: "anthropic/claude-sonnet",
+  model: ref(models.otherFamilyWithMax),
   plugin: ["opencode-wakatime", "C:/old/open-ultracode/0.1.3/.opencode/plugins/open-ultracode.ts"],
   plugins: ["@tarquinen/opencode-dcp@latest", { package: "C:\\Users\\me\\old\\.opencode\\plugins\\open-ultracode" }],
   permission: { bash: { "rm -rf *": "deny" }, edit: "ask", open_ultracode_configure_fusion: "ask" },
@@ -75,7 +80,7 @@ describe("installer config editing", () => {
     registerPlugin({ configDir: dir, pluginPath: devPlugin })
 
     const config = readJson(dir)
-    assert.equal(config.model, "anthropic/claude-sonnet")
+    assert.equal(config.model, ref(models.otherFamilyWithMax))
     assert.deepEqual(config.plugin, ["opencode-wakatime"])
     assert.deepEqual(asArray(config.plugins).slice(0, 1), ["@tarquinen/opencode-dcp@latest"])
     assert.deepEqual(config.permission, { bash: { "rm -rf *": "deny" }, edit: "ask" })
@@ -108,8 +113,8 @@ describe("installer config editing", () => {
     const jsonc = `{
   // user comment
   "plugin": ["C:/Users/me/.local/share/open-ultracode/0.1.3/.opencode/plugins/open-ultracode.ts"],
-  "plugins": [{ "package": "C:\\\\vibe\\\\packages\\\\opencode-vibe-oidc", "options": { "a": 1 } },],
-  "model": "vibe/mistral-large-4",
+  "plugins": [{ "package": "C:\\\\plugins\\\\packages\\\\some-other-plugin", "options": { "a": 1 } },],
+  "model": "${ref(models.withMax)}",
 }
 `
     const dir = configDir({ "opencode.jsonc": jsonc })
@@ -118,8 +123,8 @@ describe("installer config editing", () => {
 
     const pruned = readJson(dir, "opencode.jsonc")
     assert.equal(pruned.plugin, undefined)
-    assert.deepEqual(pruned.plugins, [{ package: "C:\\vibe\\packages\\opencode-vibe-oidc", options: { a: 1 } }])
-    assert.equal(pruned.model, "vibe/mistral-large-4")
+    assert.deepEqual(pruned.plugins, [{ package: "C:\\plugins\\packages\\some-other-plugin", options: { a: 1 } }])
+    assert.equal(pruned.model, ref(models.withMax))
     assert.equal(ourPlugins(readJson(dir)).length, 1)
     assert.equal(backups(dir).length, 1)
   })
@@ -165,13 +170,13 @@ describe("installer agent model editing", () => {
   it("sets model and variant in the frontmatter only, keeping CRLF line endings", () => {
     const file = agentFile("---\r\ndescription: Panel\r\nmodel: provider/old\r\nmode: subagent\r\n---\r\nBody mentions\r\nmodel: not-frontmatter\r\n")
 
-    setAgentModel(file, "mistral/mistral-large-4#max")
+    setAgentModel(file, ref(models.withMax, "max"))
 
     assert.equal(
       readFileSync(file, "utf8"),
-      "---\r\ndescription: Panel\r\nmodel: mistral/mistral-large-4\r\nvariant: max\r\nreasoningEffort: max\r\nmode: subagent\r\n---\r\nBody mentions\r\nmodel: not-frontmatter\r\n"
+      `---\r\ndescription: Panel\r\nmodel: ${ref(models.withMax)}\r\nvariant: max\r\nreasoningEffort: max\r\nmode: subagent\r\n---\r\nBody mentions\r\nmodel: not-frontmatter\r\n`
     )
-    assert.equal(getAgentModel(file), "mistral/mistral-large-4#max")
+    assert.equal(getAgentModel(file), ref(models.withMax, "max"))
   })
 
   it("updates an existing variant and handles a model on the last frontmatter line", () => {
@@ -185,14 +190,14 @@ describe("installer agent model editing", () => {
     assert.equal(readFileSync(lastLine, "utf8"), "---\r\nmode: subagent\r\nmodel: c/d\r\nvariant: max\r\nreasoningEffort: max\r\n---\r\n")
   })
 
-  it("removes variant and reasoningEffort for a plain model, for providers without variants such as vibe-oidc", () => {
-    // OpenCode refuses to start such an agent: "Variant unavailable for vibe-oidc/mistral-large-latest: max".
-    const file = agentFile("---\r\ndescription: Panel\r\nmodel: mistral/mistral-large-4\r\nvariant: max\r\nreasoningEffort: max\r\nmode: subagent\r\n---\r\nBody\r\n")
+  it("removes variant and reasoningEffort for a plain model, for models that declare no variants", () => {
+    // OpenCode refuses to start an agent whose variant its model does not declare ("Variant unavailable").
+    const file = agentFile(`---\r\ndescription: Panel\r\nmodel: ${ref(models.withMax)}\r\nvariant: max\r\nreasoningEffort: max\r\nmode: subagent\r\n---\r\nBody\r\n`)
 
-    setAgentModel(file, "vibe-oidc/mistral-large-latest")
+    setAgentModel(file, ref(models.noVariants))
 
-    assert.equal(readFileSync(file, "utf8"), "---\r\ndescription: Panel\r\nmodel: vibe-oidc/mistral-large-latest\r\nmode: subagent\r\n---\r\nBody\r\n")
-    assert.equal(getAgentModel(file), "vibe-oidc/mistral-large-latest")
+    assert.equal(readFileSync(file, "utf8"), `---\r\ndescription: Panel\r\nmodel: ${ref(models.noVariants)}\r\nmode: subagent\r\n---\r\nBody\r\n`)
+    assert.equal(getAgentModel(file), ref(models.noVariants))
   })
 
   it("treats legacy placeholders and missing files as unset", () => {
@@ -220,14 +225,14 @@ describe("installer summary", () => {
       }
       for (const name of names) writeFileSync(join(target, kind, name), "---\nmodel: a/b\n---\n")
     }
-    setAgentModel(join(target, "agents", "ultracode-fusion-panel-a.md"), "vibe-oidc/mistral-large-4#max")
+    setAgentModel(join(target, "agents", "ultracode-fusion-panel-a.md"), ref(models.withMax, "max"))
     registerPlugin({ configDir: target, pluginPath: join(source, ".opencode", "plugins", "open-ultracode") })
 
     const summary = installSummary({ configDir: target, sourceDir: source }).join("\n")
 
     assert.match(summary, /^OpenUltraCode 9\.9\.9 installed$/mu)
     assert.match(summary, /Plugin entry: {4}\S+\/\.opencode\/plugins\/open-ultracode$/mu)
-    assert.match(summary, /Fusion panel A: {2}vibe-oidc\/mistral-large-4 \(variant max\)$/mu)
+    assert.ok(summary.split("\n").includes(`  Fusion panel A:  ${ref(models.withMax)} (variant max)`), summary)
     assert.match(summary, /Fusion arbiter: {2}a\/b$/mu)
     assert.match(summary, /Commands: {8}\/ultracode \/ultrathink$/mu)
     assert.match(summary, /Agents: {10}3 installed/mu)
@@ -237,27 +242,27 @@ describe("installer summary", () => {
 describe("installer model list", () => {
   it("lists the user's providers before opencode's hosted catalog", () => {
     assert.deepEqual(
-      orderModels(["opencode/big-pickle", "vibe-oidc/mistral-large-4", "opencode-go/kimi", "mistral/zai-glm-5-3", "vibe-oidc/mistral-large-4"]),
-      ["vibe-oidc/mistral-large-4", "mistral/zai-glm-5-3", "opencode/big-pickle", "opencode-go/kimi"]
+      orderModels([`${catalogA}/hosted-1`, ref(models.withMax), `${catalogB}/hosted-2`, ref(models.small), ref(models.withMax)]),
+      [ref(models.withMax), ref(models.small), `${catalogA}/hosted-1`, `${catalogB}/hosted-2`]
     )
   })
 
   it("reads model IDs from opencode models output and from the user's config", () => {
-    assert.deepEqual(parseModelList("opencode/a\r\nvibe-oidc/b\nnot a model\n  mistral/c  \n"), ["opencode/a", "vibe-oidc/b", "mistral/c"])
+    assert.deepEqual(parseModelList(`${catalogA}/a\r\n${providers.user}/b\nnot a model\n  ${providers.other}/c  \n`), [`${catalogA}/a`, `${providers.user}/b`, `${providers.other}/c`])
     assert.deepEqual(
-      configuredModels({ model: "vibe-oidc/mistral-large-4#max", small_model: "vibe-oidc/mistral-small", provider: { local: { models: { "qwen-coder": {} } } } }),
-      ["vibe-oidc/mistral-large-4", "vibe-oidc/mistral-small", "local/qwen-coder"]
+      configuredModels({ model: ref(models.withMax, "max"), small_model: ref(models.small), provider: { [providers.other]: { models: { "local-model": {} } } } }),
+      [ref(models.withMax), ref(models.small), `${providers.other}/local-model`]
     )
   })
 
   it("retries opencode models while plugins are activating and keeps configured models when it never succeeds", () => {
-    const dir = configDir({ "opencode.jsonc": "{ // mine\n \"model\": \"vibe-oidc/mistral-large-4\" }" })
+    const dir = configDir({ "opencode.jsonc": `{ // mine\n "model": "${ref(models.withMax)}" }` })
     let calls = 0
-    const flaky = () => (++calls < 3 ? { ok: false, stdout: "" } : { ok: true, stdout: "opencode/big-pickle\nvibe-oidc/mistral-small\n" })
+    const flaky = () => (++calls < 3 ? { ok: false, stdout: "" } : { ok: true, stdout: `${catalogA}/hosted-1\n${ref(models.small)}\n` })
 
-    assert.deepEqual(listModels({ configDir: dir, run: flaky, delayMs: 1 }), ["vibe-oidc/mistral-large-4", "vibe-oidc/mistral-small", "opencode/big-pickle"])
+    assert.deepEqual(listModels({ configDir: dir, run: flaky, delayMs: 1 }), [ref(models.withMax), ref(models.small), `${catalogA}/hosted-1`])
     assert.equal(calls, 3)
-    assert.deepEqual(listModels({ configDir: dir, run: () => ({ ok: false, stdout: "" }), delayMs: 1 }), ["vibe-oidc/mistral-large-4"])
+    assert.deepEqual(listModels({ configDir: dir, run: () => ({ ok: false, stdout: "" }), delayMs: 1 }), [ref(models.withMax)])
   })
 })
 

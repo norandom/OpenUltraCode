@@ -5,6 +5,7 @@ import { describe, it } from "node:test"
 import assert from "node:assert/strict"
 
 import { buildChoices, customChoice, promptNumbered, resolveAnswer } from "../scripts/model-menu.mjs"
+import { models, ref } from "./fixtures/models.js"
 
 const menuPath = join(process.cwd(), "scripts", "model-menu.mjs")
 
@@ -15,8 +16,8 @@ function runMenu(stdin: string, ...args: string[]) {
 describe("installer model menu", () => {
   it("lists the default first, drops duplicates and invalid IDs, and ends with a custom entry", () => {
     assert.deepEqual(
-      buildChoices("mistral/mistral-large-4#max", ["mistral/mistral-large-4", "openai/gpt-x\r", "not a model", "openai/gpt-x", ""]),
-      ["mistral/mistral-large-4#max", "openai/gpt-x", customChoice]
+      buildChoices(`${ref(models.withMax)}#max`, [ref(models.withMax), `${ref(models.noVariants)}\r`, "not a model", ref(models.noVariants), ""]),
+      [`${ref(models.withMax)}#max`, ref(models.noVariants), customChoice]
     )
   })
 

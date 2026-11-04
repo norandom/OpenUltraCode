@@ -155,7 +155,8 @@ function liveCheck(installed, log, directory) {
   const prompt = `Use the subagent tool once for each of these agents, one after another: ${fusionAgents.join(", ")}. ` +
     "Give each the prompt: Reply with the single word OK. Do not retry, do not substitute agents or models, and do nothing else."
   log(`Live check: dispatching ${fusionAgents.join(", ")} through opencode (a few tiny model calls)...`)
-  const result = runOpencode(["run", "--format", "json", "--model", installed.coordinator, prompt], { cwd: work, timeoutMs: 600_000 })
+  const modelArgs = installed.coordinator === undefined ? [] : ["--model", installed.coordinator]
+  const result = runOpencode(["run", "--format", "json", ...modelArgs, prompt], { cwd: work, timeoutMs: 600_000 })
   const { subagents, errors } = parseRunEvents(result.stdout)
   const problems = errors.map((error) => `error event: ${error}`)
   if (!result.ok) problems.push(`opencode run failed: ${(result.stderr || String(result.error ?? "")).trim().split("\n").slice(-1)[0]}`)
@@ -181,10 +182,12 @@ function liveCheck(installed, log, directory) {
   return problems
 }
 
-export function runtimeCheck({ configDir, directory, live = false, log = console.log }) {
+export function runtimeCheck({ configDir, directory, live = false, log = console.log, fetchModels = fetchModelList }) {
   const installed = readInstalledModels(configDir, directory)
-  const models = fetchModelList()
-  const problems = checkReferences(models, { coordinator: installed.coordinator, ...installed.agents })
+  const models = fetchModels()
+  // Without a configured `model` opencode uses its own default, which is valid; only check one that is set.
+  const coordinator = installed.coordinator === undefined ? {} : { coordinator: installed.coordinator }
+  const problems = checkReferences(models, { ...coordinator, ...installed.agents })
   if (problems.length === 0 && live) problems.push(...liveCheck(installed, log, directory))
   return { installed, problems }
 }
@@ -202,7 +205,7 @@ if (process.argv[1] !== undefined && realpathSync(process.argv[1]) === realpathS
   try {
     const { installed, problems } = runtimeCheck({ configDir, directory, live: args.includes("--live") })
     console.log(`OpenUltraCode runtime check (${args.includes("--live") ? "static + live" : "static"}${directory === undefined ? "" : ` in ${directory}`}):`)
-    console.log(`  coordinator      ${installed.coordinator ?? "not set"}`)
+    console.log(`  coordinator      ${installed.coordinator ?? "opencode default (no model configured)"}`)
     for (const agent of fusionAgents) console.log(`  ${agent.padEnd(25)} ${installed.agents[agent] ?? "not set"}   (${installed.sources[agent]})`)
     if (problems.length === 0) {
       console.log("  result: OK")

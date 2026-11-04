@@ -10,12 +10,6 @@ const fusionAgents = {
 
 type FusionRole = keyof typeof fusionAgents
 
-export const defaultFusionModels: FusionModels = {
-  panelA: "opencode/deepseek-v4-pro#max",
-  panelB: "opencode/glm-5.2#max",
-  decider: "opencode/kimi-k3#max"
-}
-
 export const fusionModelReferencePattern = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[^\s#]+(?:#max)?$/u
 
 export interface FusionModels {

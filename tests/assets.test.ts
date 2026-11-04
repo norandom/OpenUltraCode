@@ -5,6 +5,7 @@ import { tmpdir } from "node:os"
 import assert from "node:assert/strict"
 
 import { validateAssets } from "../scripts/validate-assets.js"
+import { models, ref } from "./fixtures/models.js"
 
 const projectRoot = process.cwd()
 
@@ -140,11 +141,11 @@ describe("OpenUltraCode scaffold", () => {
     const root = createAssetFixture()
     writeFileSync(
       join(root, ".opencode/commands/ultracode.md"),
-      commandAsset("Run comprehensive workflow", "comprehensive", "model: anthropic/claude-sonnet-4-6")
+      commandAsset("Run comprehensive workflow", "comprehensive", `model: ${ref(models.withMax)}`)
     )
     writeFileSync(
       join(root, ".opencode/agents/open-ultracode.md"),
-      agentAsset("Coordinator", "model: anthropic/claude-sonnet-4-6")
+      agentAsset("Coordinator", `model: ${ref(models.withMax)}`)
     )
 
     const result = validateAssets(root)
@@ -181,11 +182,11 @@ describe("OpenUltraCode scaffold", () => {
     const root = createAssetFixture()
     writeFileSync(
       join(root, ".opencode/agents/ultracode-fusion-panel-a.md"),
-      fusionAgentAsset("Fusion panel A", "openai/gpt-5")
+      fusionAgentAsset("Fusion panel A", ref(models.otherFamilyWithMax))
     )
     writeFileSync(
       join(root, ".opencode/agents/not-fusion.md"),
-      agentAsset("Unexpected model", "model: openai/gpt-5\npermission:\n  edit: deny\n  bash: deny")
+      agentAsset("Unexpected model", `model: ${ref(models.otherFamilyWithMax)}\npermission:\n  edit: deny\n  bash: deny`)
     )
 
     const result = validateAssets(root)

@@ -4,7 +4,15 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, it } from "node:test"
 
-import { configureFusionModels, defaultFusionModels, isModelReference } from "../src/index.js"
+import { configureFusionModels, isModelReference } from "../src/index.js"
+import { models, providers, ref } from "./fixtures/models.js"
+
+// Fusion roles that all select a model declaring a max variant.
+const defaultFusionModels = {
+  panelA: ref(models.withMax, "max"),
+  panelB: ref(models.otherFamilyWithMax, "max"),
+  decider: ref(models.withMax, "max")
+}
 
 describe("fusion model configuration tool", () => {
   it("reads the configured role models without changing valid max-reasoning agents", async () => {
@@ -21,37 +29,37 @@ describe("fusion model configuration tool", () => {
     const panelAPath = join(root, ".opencode", "agents", "ultracode-fusion-panel-a.md")
     const panelABefore = await readFile(panelAPath, "utf8")
 
-    const result = await configureFusionModels(root, { panelB: "zai/glm-5.2#max" })
+    const result = await configureFusionModels(root, { panelB: ref(models.withMax, "max") })
 
     assert.equal(result.changed, true)
     assert.deepEqual(result.models, {
       ...defaultFusionModels,
-      panelB: "zai/glm-5.2#max"
+      panelB: ref(models.withMax, "max")
     })
     assert.equal(await readFile(panelAPath, "utf8"), panelABefore)
     const panelB = await readFile(join(root, ".opencode", "agents", "ultracode-fusion-panel-b.md"), "utf8")
-    assert.match(panelB, /^model: zai\/glm-5\.2$/m)
+    assert.ok(panelB.split("\n").includes(`model: ${ref(models.withMax)}`), panelB)
     assert.match(panelB, /^variant: max$/m)
     assert.match(panelB, /^reasoningEffort: max$/m)
     assert.doesNotMatch(panelB, /^thinking:/m)
   })
 
   it("keeps #max where the provider defines it and selects no variant for a plain model", async () => {
-    // Providers without variants (vibe-oidc) reject "max": "Variant unavailable for <model>: max".
+    // Models that declare no variants reject "max": "Variant unavailable for <model>: max".
     const root = await createFusionProject(defaultFusionModels)
 
-    const result = await configureFusionModels(root, { panelA: "vibe-oidc/mistral-large-latest", decider: "opencode/kimi-k3#max" })
+    const result = await configureFusionModels(root, { panelA: ref(models.noVariants), decider: ref(models.withMax, "max") })
 
     assert.equal(result.changed, true)
-    assert.equal(result.models.panelA, "vibe-oidc/mistral-large-latest")
+    assert.equal(result.models.panelA, ref(models.noVariants))
     assert.equal(result.reasoningEffort, "mixed-or-unset")
     const panelA = await readFile(join(root, ".opencode", "agents", "ultracode-fusion-panel-a.md"), "utf8")
-    assert.match(panelA, /^model: vibe-oidc\/mistral-large-latest$/m)
+    assert.ok(panelA.split("\n").includes(`model: ${ref(models.noVariants)}`), panelA)
     assert.doesNotMatch(panelA, /^(?:variant|reasoningEffort):/m)
     const decider = await readFile(join(root, ".opencode", "agents", "ultracode-fusion-arbiter.md"), "utf8")
     assert.match(decider, /^variant: max$/m)
     assert.match(decider, /^reasoningEffort: max$/m)
-    assert.equal((await configureFusionModels(root, {})).models.panelA, "vibe-oidc/mistral-large-latest", "a plain model must read back without #max")
+    assert.equal((await configureFusionModels(root, {})).models.panelA, ref(models.noVariants), "a plain model must read back without #max")
   })
 
   it("persists catalog model IDs whose nested model path begins with a sigil", async () => {
@@ -73,16 +81,16 @@ describe("fusion model configuration tool", () => {
     const before = await readFile(panelAPath, "utf8")
 
     await assert.rejects(configureFusionModels(root, { panelA: "not-a-model" }), /provider\/model/)
-    await assert.rejects(configureFusionModels(root, { panelA: "deepseek/deepseek-v4-pro#high" }), /#max/)
+    await assert.rejects(configureFusionModels(root, { panelA: ref(models.withMax, "high") }), /#max/)
     assert.equal(await readFile(panelAPath, "utf8"), before)
   })
 
   it("accepts direct and nested provider model references with only the max variant", () => {
-    assert.equal(isModelReference("moonshotai/kimi-k3"), true)
-    assert.equal(isModelReference("openrouter/deepseek/deepseek-v4-pro-0813#max"), true)
+    assert.equal(isModelReference(ref(models.withMax)), true)
+    assert.equal(isModelReference(`${providers.other}/vendor/nested-model-0813#max`), true)
     assert.equal(isModelReference("cloudflare-workers-ai/@cf/meta/llama-4#max"), true)
-    assert.equal(isModelReference("openrouter/~anthropic/special-model"), true)
-    assert.equal(isModelReference("moonshotai/kimi-k3#high"), false)
+    assert.equal(isModelReference(`${providers.other}/~vendor/special-model`), true)
+    assert.equal(isModelReference(ref(models.withMax, "high")), false)
     assert.equal(isModelReference("bad model"), false)
     assert.equal(isModelReference("model-only"), false)
   })
@@ -91,10 +99,10 @@ describe("fusion model configuration tool", () => {
     const root = await createFusionProject(defaultFusionModels, "\r\n", true)
     const panelAPath = join(root, ".opencode", "agents", "ultracode-fusion-panel-a.md")
 
-    await configureFusionModels(root, { panelA: "deepseek/deepseek-v4-pro#max" })
+    await configureFusionModels(root, { panelA: ref(models.withMax, "max") })
 
     const content = await readFile(panelAPath, "utf8")
-    assert.match(content, /^model: deepseek\/deepseek-v4-pro\r$/m)
+    assert.ok(content.split("\n").includes(`model: ${ref(models.withMax)}\r`), content)
     assert.match(content, /^variant: max\r$/m)
     assert.match(content, /Example body metadata:\r\nmodel: docs\/example#high\r\n/)
     assert.doesNotMatch(content, /^thinking:/m)
