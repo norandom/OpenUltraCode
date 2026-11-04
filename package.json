@@ -14,7 +14,8 @@
     "validate:assets": "tsx scripts/validate-assets.ts",
     "validate:installers": "tsx scripts/validate-installers.ts",
     "check": "tsx scripts/validate-assets.ts && tsx scripts/validate-installers.ts && tsc --noEmit && eslint . && node --import tsx --test \"tests/**/*.test.ts\"",
-    "prepare": "node scripts/install-git-hooks.mjs"
+    "prepare": "node scripts/install-git-hooks.mjs",
+    "check:runtime": "node scripts/runtime-check.mjs --live"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

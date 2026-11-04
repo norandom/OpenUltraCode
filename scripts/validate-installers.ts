@@ -54,6 +54,13 @@ const rules: ReadonlyArray<{ readonly applies: readonly string[]; readonly test:
   },
   {
     applies: allInstallers,
+    // Fakes cannot see runtime failures (undeclared variants, missing providers, 400s); every
+    // installer must reload opencode and check the real installation, with an explicit opt-out.
+    test: (content) => /runtime-check\.mjs/u.test(content) && /opencode reload/u.test(content) && /skip-runtime-check|SkipRuntimeCheck/u.test(content),
+    message: "must run 'opencode reload' and scripts/runtime-check.mjs after installing, with a --skip-runtime-check/-SkipRuntimeCheck opt-out"
+  },
+  {
+    applies: allInstallers,
     // Batch installs choose every fusion model without the interactive menu.
     test: (content) =>
       (/--panel-a\)/u.test(content) && /--panel-b\)/u.test(content) && /--decider\)/u.test(content) && /--non-interactive\)/u.test(content)) ||

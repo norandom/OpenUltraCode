@@ -90,8 +90,8 @@ for (const shell of powershells) {
     it("installs from the checkout, stays idempotent, and removes only its own files", () => {
       const configDir = seedConfigDir()
 
-      assertOk(run("install-dev.ps1", "-SkipChecks", "-NonInteractive", "-OpenCodeConfigDir", configDir), "install-dev.ps1")
-      assertOk(run("install-dev.ps1", "-SkipChecks", "-NonInteractive", "-OpenCodeConfigDir", configDir), "second install-dev.ps1")
+      assertOk(run("install-dev.ps1", "-SkipChecks", "-SkipRuntimeCheck", "-NonInteractive", "-OpenCodeConfigDir", configDir), "install-dev.ps1")
+      assertOk(run("install-dev.ps1", "-SkipChecks", "-SkipRuntimeCheck", "-NonInteractive", "-OpenCodeConfigDir", configDir), "second install-dev.ps1")
 
       assert.equal(ourPluginPaths(readConfig(configDir)).length, 1)
       assertForeignSettingsKept(configDir)
@@ -108,7 +108,7 @@ for (const shell of powershells) {
       const configDir = seedConfigDir()
 
       assertOk(
-        run("install-dev.ps1", "-SkipChecks", "-NonInteractive", "-OpenCodeConfigDir", configDir, "-PanelA", "vibe-oidc/mistral-large-4", "-PanelB", "vibe-oidc/zai-glm-5-3#max", "-Decider", "openai/gpt-x"),
+        run("install-dev.ps1", "-SkipChecks", "-SkipRuntimeCheck", "-NonInteractive", "-OpenCodeConfigDir", configDir, "-PanelA", "vibe-oidc/mistral-large-4", "-PanelB", "vibe-oidc/zai-glm-5-3#max", "-Decider", "openai/gpt-x"),
         "install-dev.ps1 with model flags"
       )
       assert.deepEqual(
@@ -128,10 +128,10 @@ for (const shell of powershells) {
     it("installs a release archive over a dev install and rejects bad input without changes", () => {
       const configDir = seedConfigDir()
       const installDir = join(tempDir("home"), "open-ultracode")
-      assertOk(run("install-dev.ps1", "-SkipChecks", "-NonInteractive", "-OpenCodeConfigDir", configDir), "install-dev.ps1")
+      assertOk(run("install-dev.ps1", "-SkipChecks", "-SkipRuntimeCheck", "-NonInteractive", "-OpenCodeConfigDir", configDir), "install-dev.ps1")
 
       assertOk(
-        run("install.ps1", "-Archive", releaseArchive(), "-InstallDir", installDir, "-NonInteractive", "-PanelB", "openai/gpt-x", "-OpenCodeConfigDir", configDir),
+        run("install.ps1", "-Archive", releaseArchive(), "-InstallDir", installDir, "-SkipRuntimeCheck", "-NonInteractive", "-PanelB", "openai/gpt-x", "-OpenCodeConfigDir", configDir),
         "install.ps1"
       )
       const paths = ourPluginPaths(readConfig(configDir))
@@ -143,10 +143,10 @@ for (const shell of powershells) {
       assert.equal(agentModel(configDir, "ultracode-fusion-panel-b.md"), "openai/gpt-x")
       const configAfterInstall = readFileSync(join(configDir, "opencode.json"), "utf8")
 
-      const badModel = run("install.ps1", "-Archive", releaseArchive(), "-InstallDir", installDir, "-NonInteractive", "-PanelA", "not a model", "-OpenCodeConfigDir", configDir)
+      const badModel = run("install.ps1", "-Archive", releaseArchive(), "-InstallDir", installDir, "-SkipRuntimeCheck", "-NonInteractive", "-PanelA", "not a model", "-OpenCodeConfigDir", configDir)
       const garbage = join(tempDir("garbage"), "release.tar.gz")
       writeFileSync(garbage, "not an archive")
-      const badArchive = run("install.ps1", "-Archive", garbage, "-InstallDir", installDir, "-NonInteractive", "-OpenCodeConfigDir", configDir)
+      const badArchive = run("install.ps1", "-Archive", garbage, "-InstallDir", installDir, "-SkipRuntimeCheck", "-NonInteractive", "-OpenCodeConfigDir", configDir)
 
       assert.notEqual(badModel.status, 0, "an invalid model must fail the install")
       assert.notEqual(badArchive.status, 0, "a broken archive must fail the install")
@@ -183,17 +183,17 @@ describe("sh installers", { skip: !runShTests && "set OPENULTRACODE_E2E_SH=1 to 
     const configDir = seedConfigDir()
     const installDir = join(home, "open-ultracode")
 
-    assertOk(run("install-dev.sh", configDir, installDir, "--skip-checks", "--non-interactive", "--panel-b", "vibe-oidc/zai-glm-5-3"), "install-dev.sh")
+    assertOk(run("install-dev.sh", configDir, installDir, "--skip-checks", "--skip-runtime-check", "--non-interactive", "--panel-b", "vibe-oidc/zai-glm-5-3"), "install-dev.sh")
     assert.equal(agentModel(configDir, "ultracode-fusion-panel-b.md"), "vibe-oidc/zai-glm-5-3")
-    assertOk(run("install.sh", configDir, installDir, "--non-interactive", "--archive", releaseArchive(), "--decider", "openai/gpt-x"), "install.sh")
-    assertOk(run("install.sh", configDir, installDir, "--non-interactive", "--archive", releaseArchive()), "second install.sh")
+    assertOk(run("install.sh", configDir, installDir, "--skip-runtime-check", "--non-interactive", "--archive", releaseArchive(), "--decider", "openai/gpt-x"), "install.sh")
+    assertOk(run("install.sh", configDir, installDir, "--skip-runtime-check", "--non-interactive", "--archive", releaseArchive()), "second install.sh")
 
     assert.equal(ourPluginPaths(readConfig(configDir)).length, 1)
     assert.equal(agentModel(configDir, "ultracode-fusion-arbiter.md"), "openai/gpt-x", "a chosen model must be kept on update")
     assertForeignSettingsKept(configDir)
 
     const before = readFileSync(join(configDir, "opencode.json"), "utf8")
-    const badModel = run("install.sh", configDir, installDir, "--non-interactive", "--archive", releaseArchive(), "--panel-a", "not a model")
+    const badModel = run("install.sh", configDir, installDir, "--skip-runtime-check", "--non-interactive", "--archive", releaseArchive(), "--panel-a", "not a model")
     assert.notEqual(badModel.status, 0)
     assert.equal(readFileSync(join(configDir, "opencode.json"), "utf8"), before)
 
@@ -208,7 +208,7 @@ describe("sh installers", { skip: !runShTests && "set OPENULTRACODE_E2E_SH=1 to 
     const installDir = tempDir("not-ours")
     writeFileSync(join(installDir, "precious.txt"), "keep me")
 
-    const result = run("install.sh", configDir, installDir, "--non-interactive", "--archive", releaseArchive())
+    const result = run("install.sh", configDir, installDir, "--skip-runtime-check", "--non-interactive", "--archive", releaseArchive())
 
     assert.notEqual(result.status, 0)
     assert.equal(readFileSync(join(installDir, "precious.txt"), "utf8"), "keep me")

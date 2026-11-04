@@ -24,6 +24,8 @@ const requiredScaffoldPaths = [
   "scripts/validate-installers.ts",
   "scripts/installer-lib.mjs",
   "scripts/model-menu.mjs",
+  "scripts/runtime-check.mjs",
+  ".githooks/pre-push",
   "scripts/build-release-archive.mjs",
   ".githooks/pre-commit",
   "install.sh",
@@ -277,7 +279,7 @@ updates:
   - package-ecosystem: "github-actions"
 `)
   writeFileSync(join(root, "pnpm-workspace.yaml"), "allowBuilds:\n  esbuild: true\nminimumReleaseAge: 4320\n")
-  for (const script of ["validate-assets.ts", "validate-installers.ts", "installer-lib.mjs", "model-menu.mjs", "build-release-archive.mjs"]) {
+  for (const script of ["validate-assets.ts", "validate-installers.ts", "installer-lib.mjs", "model-menu.mjs", "runtime-check.mjs", "build-release-archive.mjs"]) {
     writeFileSync(join(root, "scripts", script), "")
   }
   writeFileSync(join(root, ".github/workflows/ci.yml"), "on: [push]\n")

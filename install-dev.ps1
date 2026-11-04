@@ -6,6 +6,7 @@ param(
   [string]$Decider,
   [switch]$NonInteractive,
   [switch]$SkipChecks,
+  [switch]$SkipRuntimeCheck,
   [switch]$Remove
 )
 
@@ -288,6 +289,29 @@ function Show-FusionModelMenu([string]$Prompt, [string]$DefaultModel, [string[]]
   }
 }
 
+# Makes the running opencode pick up the install (`opencode reload`), then checks the REAL
+# installation: the coordinator and every fusion agent must name a provider, model, and variant
+# that opencode offers; with -Live each fusion agent must also answer through a real dispatch.
+function Invoke-RuntimeCheck([string]$SourceDir, [bool]$Live) {
+  if ($SkipRuntimeCheck) {
+    Write-Host "OpenUltraCode: runtime check skipped (-SkipRuntimeCheck)."
+    return
+  }
+  if (-not (Get-Command opencode -ErrorAction SilentlyContinue)) {
+    Write-Warning "opencode is not on PATH; skipped the runtime check."
+    return
+  }
+  $ErrorActionPreference = "Continue"
+  opencode reload *> $null
+  if ($LASTEXITCODE -ne 0) { Write-Warning "'opencode reload' failed; restart opencode to load the changes." }
+  $checkArgs = @((Join-Path $SourceDir "scripts\runtime-check.mjs"), "--config-dir", $OpenCodeConfigDir)
+  if ($Live) { $checkArgs += "--live" }
+  node @checkArgs
+  $checkStatus = $LASTEXITCODE
+  if ($checkStatus -eq 1) { throw "The runtime check found problems (see above). Fix them with -PanelA/-PanelB/-Decider or /ultracode-fusion-models." }
+  if ($checkStatus -ne 0) { Write-Warning "The runtime check could not reach opencode; run 'node $($checkArgs[0])' after starting it." }
+}
+
 function Enable-GitHooks {
   if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return }
   $ErrorActionPreference = "Continue"
@@ -327,6 +351,8 @@ try {
   }
   Install-GlobalAssets $repoRoot $overrides
   Enable-GitHooks
+  # Developers get the live check by default: every fusion agent is dispatched once.
+  Invoke-RuntimeCheck $repoRoot $true
   # Show what is actually installed, read back from disk.
   Write-Host ""
   Invoke-InstallerLib "Summarizing the installation" summary "--config-dir" $OpenCodeConfigDir "--source-dir" $repoRoot | ForEach-Object { Write-Host $_ }

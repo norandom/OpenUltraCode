@@ -79,6 +79,8 @@ Removal deletes the copied skill and exactly the commands and agents OpenUltraCo
 
 ## Troubleshooting
 
+- Start with `pnpm run check:runtime` (or `node <install dir>/scripts/runtime-check.mjs --live`): it checks the running opencode against the installed coordinator and fusion agents and names every unavailable provider, model, or variant, and every fusion agent that does not answer on its configured model.
+
 - Commands or agents missing: restart opencode and confirm `.opencode/commands`, `.opencode/agents`, and `.opencode/skills/open-ultracode/SKILL.md` exist.
 - Plugin not active: confirm the `plugins` array contains `{ "package": ".../.opencode/plugins/open-ultracode" }` (a directory, not a single `.ts` file) and `enabled` is not false.
 - `Plugin failed to load` with a path to a missing `open-ultracode.ts` or an old version directory: an older release left an entry in `opencode.json` or `opencode.jsonc`. Re-run the installer; it replaces stale OpenUltraCode entries in both files with one current entry.

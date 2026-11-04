@@ -20,6 +20,7 @@ export const releaseFiles = [
   "src",
   "scripts/installer-lib.mjs",
   "scripts/model-menu.mjs",
+  "scripts/runtime-check.mjs",
   "docs",
   "README.md",
   "LICENSE",

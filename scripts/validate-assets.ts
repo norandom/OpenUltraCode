@@ -41,6 +41,8 @@ const requiredScaffoldPaths = [
   "scripts/validate-installers.ts",
   "scripts/installer-lib.mjs",
   "scripts/model-menu.mjs",
+  "scripts/runtime-check.mjs",
+  ".githooks/pre-push",
   "scripts/build-release-archive.mjs",
   ".githooks/pre-commit"
 ] as const

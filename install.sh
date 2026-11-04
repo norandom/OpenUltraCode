@@ -22,6 +22,8 @@ Installs the latest OpenUltraCode release for opencode.
 Options:
   -remove, --remove, -r   Remove OpenUltraCode from opencode instead of installing.
   --non-interactive       Do not prompt; keep installed fusion models or use the shipped defaults.
+  --verify                Also dispatch every fusion agent once through opencode (a few tiny model calls).
+  --skip-runtime-check    Do not reload opencode or check the installation against it.
   --panel-a <model>       Fusion panel A model (provider/model or provider/model#max).
   --panel-b <model>       Fusion panel B model.
   --decider <model>       Fusion arbiter model.
@@ -37,6 +39,7 @@ fail() {
 
 REMOVE=0
 NON_INTERACTIVE=0
+RUNTIME_CHECK=static
 ARCHIVE=""
 PANEL_A=""
 PANEL_B=""
@@ -45,6 +48,8 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     -remove|--remove|-r) REMOVE=1 ;;
     --non-interactive) NON_INTERACTIVE=1 ;;
+    --verify) RUNTIME_CHECK=live ;;
+    --skip-runtime-check) RUNTIME_CHECK=skip ;;
     --panel-a|--panel-b|--decider|--archive)
       [ "$#" -ge 2 ] || fail "$1 needs a value"
       case "$1" in
@@ -198,6 +203,34 @@ install_latest_release() {
   fi
 }
 
+# Makes the running opencode pick up the install (`opencode reload`), then checks the REAL
+# installation: the coordinator and every fusion agent must name a provider, model, and variant
+# that opencode offers.
+verify_runtime() {
+  source_dir="$1"
+  if [ "$RUNTIME_CHECK" = "skip" ]; then
+    echo "OpenUltraCode: runtime check skipped (--skip-runtime-check)."
+    return 0
+  fi
+  if ! command -v opencode >/dev/null 2>&1; then
+    echo "OpenUltraCode: opencode is not on PATH; skipped the runtime check." >&2
+    return 0
+  fi
+  opencode reload >/dev/null 2>&1 || echo "OpenUltraCode: 'opencode reload' failed; restart opencode to load the changes." >&2
+  check_status=0
+  if [ "$RUNTIME_CHECK" = "live" ]; then
+    node "$source_dir/scripts/runtime-check.mjs" --config-dir "$OPENCODE_CONFIG_DIR" --live || check_status=$?
+  else
+    node "$source_dir/scripts/runtime-check.mjs" --config-dir "$OPENCODE_CONFIG_DIR" || check_status=$?
+  fi
+  if [ "$check_status" -eq 1 ]; then
+    fail "the runtime check found problems (see above). Fix them with --panel-a/--panel-b/--decider or /ultracode-fusion-models."
+  fi
+  if [ "$check_status" -ne 0 ]; then
+    echo "OpenUltraCode: the runtime check could not reach opencode; run 'node $source_dir/scripts/runtime-check.mjs' after starting it." >&2
+  fi
+}
+
 remove_legacy_global_files() {
   # OpenCode 2 does not load ~/.config/opencode/tools; the plugin registers the fusion tool itself.
   rm -f "$OPENCODE_CONFIG_DIR/tools/open_ultracode_configure_fusion.ts" "$OPENCODE_CONFIG_DIR/lib/fusion-config.ts"
@@ -258,6 +291,7 @@ done
 
 install_latest_release
 install_global_assets "$INSTALL_DIR"
+verify_runtime "$INSTALL_DIR"
 
 # Show what is actually installed, read back from disk.
 echo

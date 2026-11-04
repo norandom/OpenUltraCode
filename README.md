@@ -76,6 +76,15 @@ The development installers run `pnpm install` and `pnpm run check` first (skip w
 - ESLint (`pnpm run lint`; the containerized Dagger run is optional as `pnpm run lint:container`);
 - the test suite, including `sh`/`dash`/`shellcheck` and PowerShell 7/5.1 syntax checks for the installers and real installer runs against temporary config directories.
 
+#### Runtime check against the real installation
+
+Unit tests use fakes and temporary copies, so they cannot see what only a running opencode reveals: a provider missing from the running service, a model or variant opencode does not offer ("Variant unavailable for <model>: max"), or a provider answering `400 Bad Request`. `scripts/runtime-check.mjs` checks the real installation through opencode's own CLI:
+
+- **Static (free):** `opencode api model.list` must offer the coordinator model and every installed fusion agent's provider, model, and variant.
+- **Live (`--live`, a few tiny model calls):** the coordinator dispatches each installed fusion agent once through opencode's real subagent path (`opencode run --format json`); every dispatch must complete, and the exported child session (`opencode session export`) must show the configured model and variant.
+
+Every installer finishes with `opencode reload` (so a running opencode picks up the install without a restart) and the runtime check, and fails with the problems listed if it does not pass: the release installers run the static check (`--verify` / `-Verify` adds the live check), the development installers run the live check. `--skip-runtime-check` / `-SkipRuntimeCheck` skips both. Run it any time with `pnpm run check:runtime`. The `.githooks/pre-push` hook runs the live check before a `v*` release tag is pushed, and `OPENULTRACODE_RUNTIME=1 pnpm test` includes it in the test suite.
+
 `pnpm install` enables the versioned `.githooks/pre-commit` hook (`core.hooksPath`). The hook refuses commits whose staged files differ from the working tree or that leave project files untracked, then runs `pnpm run check`. CI (`.github/workflows/ci.yml`) runs the same gate on Linux, macOS, and Windows with Node 22 and 24; releases run CI first. Set `OPENULTRACODE_E2E_SH=1` to also run the `sh` installers end to end on Windows.
 
 ### Restart opencode
