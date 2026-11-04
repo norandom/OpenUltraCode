@@ -1,8 +1,34 @@
 #!/usr/bin/env sh
+# OpenUltraCode pre-commit gate: fast, offline, no Docker. It runs the same checks as CI
+# (`pnpm run check`, which includes the sh/dash/shellcheck/PowerShell syntax tests) on
+# exactly what is being committed.
+# Enabled automatically by `pnpm install` (scripts/install-git-hooks.mjs).
+# Emergency bypass: git commit --no-verify
 set -eu
 
-if command -v dagger >/dev/null 2>&1; then
-  pnpm run lint
-else
-  pnpm run eslint
-fi
+cd "$(git rev-parse --show-toplevel)"
+
+fail() {
+  printf 'pre-commit: %s\n' "$*" >&2
+  exit 1
+}
+
+command -v node >/dev/null 2>&1 || fail "node is required"
+command -v pnpm >/dev/null 2>&1 || fail "pnpm is required (run 'corepack enable')"
+[ -d node_modules ] || fail "run 'pnpm install --frozen-lockfile' first"
+
+# The checks run on the working tree, so it must match what is being committed.
+unstaged=$(git diff --name-only)
+for file in $(git diff --cached --name-only --diff-filter=ACMR); do
+  case "
+$unstaged
+" in
+    *"
+$file
+"*) fail "$file has unstaged changes; stage or stash them so the checks see the commit" ;;
+  esac
+done
+untracked=$(git ls-files --others --exclude-standard -- src scripts tests .opencode .githooks .github)
+[ -z "$untracked" ] || fail "untracked project files would be missing from this commit: $untracked"
+
+pnpm run --silent check || fail "pnpm run check failed"

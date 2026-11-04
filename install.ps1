@@ -6,14 +6,17 @@ param(
   [string]$PanelA,
   [string]$PanelB,
   [string]$Decider,
-  [switch]$NonInteractive
+  [string]$Archive,
+  [switch]$NonInteractive,
+  [switch]$Remove
 )
 
+# This script also runs as `irm .../install.ps1 | iex`: it must never call `exit`
+# (that would close the user's shell), so failures are thrown instead.
 $ErrorActionPreference = "Stop"
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-  Write-Error "node is required for OpenUltraCode install."
-  exit 1
+  throw "node is required for OpenUltraCode install."
 }
 
 if (-not $OpenCodeConfigDir) {
@@ -23,120 +26,349 @@ if (-not $OpenCodeConfigDir) {
 if (-not $InstallDir) {
   $InstallDir = Join-Path $HOME ".local\share\open-ultracode"
 }
+$InstallDir = [System.IO.Path]::GetFullPath($InstallDir)
+$InstallerLib = Join-Path $InstallDir "scripts\installer-lib.mjs"
 
-$DefaultFusionPanelAModel = "opencode/deepseek-v4-pro#max"
-$DefaultFusionPanelBModel = "opencode/glm-5.2#max"
-$DefaultFusionArbiterModel = "opencode/kimi-k3#max"
+$FusionAgents = @(
+  @{ Name = "ultracode-fusion-panel-a.md"; Prompt = "Choose fusion panel A model" },
+  @{ Name = "ultracode-fusion-panel-b.md"; Prompt = "Choose fusion panel B model" },
+  @{ Name = "ultracode-fusion-arbiter.md"; Prompt = "Choose fusion arbiter model" }
+)
+# Files OpenUltraCode ships; tests/installer-assets.test.ts keeps these lists in sync with .opencode.
+$ShippedCommands = @(
+  "ultracode-debug.md",
+  "ultracode-fusion-models.md",
+  "ultracode-fusion.md",
+  "ultracode-research.md",
+  "ultracode-spec-audit.md",
+  "ultracode-verify.md",
+  "ultracode.md",
+  "ultrathink-fusion.md",
+  "ultrathink.md"
+)
+$ShippedAgents = @(
+  "open-ultracode-adversary.md",
+  "open-ultracode-implementer.md",
+  "open-ultracode-planner.md",
+  "open-ultracode-reconciler.md",
+  "open-ultracode-researcher.md",
+  "open-ultracode-verifier.md",
+  "open-ultracode.md",
+  "ultracode-fusion-arbiter.md",
+  "ultracode-fusion-panel-a.md",
+  "ultracode-fusion-panel-b.md"
+)
+$ModelIdPattern = '^[A-Za-z0-9][A-Za-z0-9._-]*/[^\s#]+(#max)?$'
+
+# Native commands do not honor $ErrorActionPreference (and Windows PowerShell 5.1 turns
+# their stderr into terminating errors when output is redirected), so every native call
+# goes through this helper: stderr is passed through and a non-zero exit code throws.
+function Invoke-Native {
+  param([Parameter(Mandatory)][string]$What, [Parameter(Mandatory)][scriptblock]$Command)
+  $ErrorActionPreference = "Continue"
+  & $Command
+  if ($LASTEXITCODE -ne 0) { throw "$What failed with exit code $LASTEXITCODE" }
+}
+
+function Invoke-InstallerLib {
+  param([Parameter(Mandatory)][string]$What, [Parameter(ValueFromRemainingArguments)][string[]]$Arguments)
+  Invoke-Native $What { node $InstallerLib @Arguments }
+}
 
 function Get-AgentModel([string]$AgentFile) {
-  if (-not (Test-Path $AgentFile)) { return $null }
-  $env:AGENT_FILE = $AgentFile
-  $model = node -e "const fs = require('node:fs'); const file = process.env.AGENT_FILE; if (!file || !fs.existsSync(file)) process.exit(0); const content = fs.readFileSync(file, 'utf8'); const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(content)?.[1]; const model = frontmatter === undefined ? undefined : /^model:[ \t]*(\S+)[ \t]*$/m.exec(frontmatter)?.[1]; const legacyFusionPlaceholders = new Set(['provider/model-a', 'provider/model-b', 'provider/arbiter-model']); const baseModel = model?.replace(/#[^#]+$/, ''); if (baseModel !== undefined && !legacyFusionPlaceholders.has(baseModel)) { process.stdout.write(baseModel + '#max'); }"
-  return $model
+  $model = Invoke-InstallerLib "Reading $AgentFile" get-agent-model $AgentFile
+  if ($model) { return [string]$model }
+  return $null
 }
 
-function Set-AgentModel([string]$AgentFile, [string]$Model) {
-  if (-not (Test-Path $AgentFile)) {
-    Write-Error "Missing fusion agent file: $AgentFile"
-    exit 1
-  }
-  $env:AGENT_FILE = $AgentFile
-  $env:AGENT_MODEL = $Model
-  node -e "const fs = require('node:fs'); const file = process.env.AGENT_FILE; const model = process.env.AGENT_MODEL; if (!file || !model) throw new Error('missing agent model replacement input'); if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\/[^\s#]+(?:#max)?$/.test(model)) { throw new Error(model + ' must be provider/model or provider/model#max'); } const content = fs.readFileSync(file, 'utf8'); if (!/^model: .+$/m.test(content)) throw new Error(file + ' does not contain model frontmatter'); const baseModel = model.replace(/#[^#]+$/, ''); let updated = content.replace(/^model: .+$/m, 'model: ' + baseModel); updated = /^variant:/m.test(updated) ? updated.replace(/^variant:.*$/m, 'variant: max') : updated.replace(/^model:.*$/m, (line) => line + '\nvariant: max'); fs.writeFileSync(file, updated);"
+function Assert-ModelId([string]$Model, [string]$Name) {
+  if ($Model -notmatch $ModelIdPattern) { throw "$Name '$Model' must be provider/model or provider/model#max." }
 }
 
-function Download-LatestRelease {
-  $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("open-ultracode-" + [System.Guid]::NewGuid().ToString("N"))
-  New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
-  $archive = Join-Path $tempDir "open-ultracode-release.tar.gz"
+function Get-OpenCodeModels {
+  if (-not (Get-Command opencode -ErrorAction SilentlyContinue)) { return @() }
+  $ErrorActionPreference = "Continue"
+  $output = opencode models 2>$null
+  if ($LASTEXITCODE -ne 0 -or -not $output) { return @() }
+  return @($output | ForEach-Object { "$_".Trim() } | Where-Object { $_ -match $ModelIdPattern } | Select-Object -Unique)
+}
 
-  $releaseUrl = "https://github.com/$Repo/releases/latest/download/open-ultracode-release.tar.gz"
-  Write-Host "Downloading latest OpenUltraCode release from $releaseUrl..."
+function Test-InteractiveConsole {
+  if ($NonInteractive -or $Host.Name -ne "ConsoleHost") { return $false }
   try {
-    Invoke-WebRequest -Uri $releaseUrl -OutFile $archive
+    return -not ([Console]::IsInputRedirected -or [Console]::IsOutputRedirected)
   } catch {
-    Write-Error "Could not download the latest OpenUltraCode release asset from $releaseUrl: $_"
-    exit 1
+    return $false
   }
-
-  if (Test-Path $InstallDir) {
-    Remove-Item -Path $InstallDir -Recurse -Force
-  }
-  New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
-
-  if (Get-Command tar -ErrorAction SilentlyContinue) {
-    tar -xzf $archive -C $InstallDir
-  } else {
-    Write-Error "tar is required to extract release archive."
-    exit 1
-  }
-
-  Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-function Register-GlobalPlugin {
-  $configFile = Join-Path $OpenCodeConfigDir "opencode.json"
-  if (-not (Test-Path $configFile) -and (Test-Path (Join-Path $OpenCodeConfigDir "opencode.jsonc"))) {
-    $configFile = Join-Path $OpenCodeConfigDir "opencode.jsonc"
+function Select-FusionModel([string]$Prompt, [string]$DefaultModel, [string]$CurrentModel, [string[]]$AvailableModels) {
+  if ($CurrentModel) { $DefaultModel = $CurrentModel }
+  if (-not (Test-InteractiveConsole)) {
+    Write-Host "${Prompt}: using $DefaultModel"
+    return $DefaultModel
   }
-  $pluginPath = (Join-Path $InstallDir ".opencode\plugins\open-ultracode.ts").Replace("\", "/")
-
-  if (-not (Test-Path $OpenCodeConfigDir)) {
-    New-Item -ItemType Directory -Path $OpenCodeConfigDir -Force | Out-Null
+  $previousCtrlC = $null
+  try {
+    $previousCtrlC = [Console]::TreatControlCAsInput
+    [Console]::TreatControlCAsInput = $true
+    return Show-FusionModelMenu $Prompt $DefaultModel $AvailableModels
+  } catch [System.IO.IOException] {
+    Write-Host "${Prompt}: console menu unavailable, using $DefaultModel"
+    return $DefaultModel
+  } finally {
+    if ($null -ne $previousCtrlC) { try { [Console]::TreatControlCAsInput = $previousCtrlC } catch { } }
   }
-
-  if (-not (Test-Path $configFile)) {
-    "{\n  `"`$schema`": `"https://opencode.ai/config.json`"\n}\n" | Set-Content -Path $configFile -Encoding utf8
-  }
-
-  $env:OPENCODE_GLOBAL_CONFIG = $configFile
-  $env:OPENCODE_PLUGIN_PATH = $pluginPath
-
-  node -e "const fs = require('node:fs'); const configPath = process.env.OPENCODE_GLOBAL_CONFIG; const pluginPath = process.env.OPENCODE_PLUGIN_PATH; if (!configPath || !pluginPath) { throw new Error('missing OpenUltraCode installer environment'); } let config = {}; try { config = JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch (error) { throw new Error('Could not parse ' + configPath + ': ' + (error instanceof Error ? error.message : String(error))); } if (typeof config !== 'object' || config === null || Array.isArray(config)) { throw new Error(configPath + ' must contain a JSON object'); } config['`$schema'] = config['`$schema'] || 'https://opencode.ai/config.json'; if (config.permission === undefined) { config.permission = { open_ultracode_configure_fusion: 'ask' }; } else if (typeof config.permission === 'object' && config.permission !== null && !Array.isArray(config.permission) && !('open_ultracode_configure_fusion' in config.permission)) { config.permission.open_ultracode_configure_fusion = 'ask'; } const existing = Array.isArray(config.plugin) ? config.plugin : []; config.plugin = existing.filter((entry) => entry !== './.opencode/plugins/open-ultracode.ts'); if (!config.plugin.includes(pluginPath)) { config.plugin.push(pluginPath); } fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n');"
 }
 
-function Install-GlobalAssets {
+# Chooses all fusion models before anything is copied, so a cancelled or failed menu
+# leaves the existing installation untouched.
+function Resolve-FusionModels([string]$SourceAgentsDir, [string]$TargetAgentsDir, [hashtable]$Overrides) {
+  $availableModels = @()
+  if (Test-InteractiveConsole) { $availableModels = Get-OpenCodeModels }
+  $chosen = @{}
+  foreach ($agent in $FusionAgents) {
+    $override = $Overrides[$agent.Name]
+    if ($override) {
+      Assert-ModelId $override $agent.Name
+      $chosen[$agent.Name] = $override
+      continue
+    }
+    $default = Get-AgentModel (Join-Path $SourceAgentsDir $agent.Name)
+    if (-not $default) { throw "Shipped agent $($agent.Name) has no default model." }
+    $current = Get-AgentModel (Join-Path $TargetAgentsDir $agent.Name)
+    $model = Select-FusionModel $agent.Prompt $default $current $availableModels
+    Assert-ModelId $model $agent.Name
+    $chosen[$agent.Name] = $model
+  }
+  return $chosen
+}
+
+function Remove-LegacyGlobalFiles {
+  # OpenCode 2 does not load ~/.config/opencode/tools; the plugin registers the fusion tool itself.
+  Remove-Item -Path (Join-Path $OpenCodeConfigDir "tools\open_ultracode_configure_fusion.ts") -Force -ErrorAction SilentlyContinue
+  Remove-Item -Path (Join-Path $OpenCodeConfigDir "lib\fusion-config.ts") -Force -ErrorAction SilentlyContinue
+}
+
+function Install-GlobalAssets([string]$SourceDir, [hashtable]$Overrides) {
   $skillsDir = Join-Path $OpenCodeConfigDir "skills"
   $commandsDir = Join-Path $OpenCodeConfigDir "commands"
   $agentsDir = Join-Path $OpenCodeConfigDir "agents"
-  $toolsDir = Join-Path $OpenCodeConfigDir "tools"
-  $libDir = Join-Path $OpenCodeConfigDir "lib"
+  $models = Resolve-FusionModels (Join-Path $SourceDir ".opencode\agents") $agentsDir $Overrides
 
-  New-Item -ItemType Directory -Path $skillsDir, $commandsDir, $agentsDir, $toolsDir, $libDir -Force | Out-Null
-
-  $panelAFile = Join-Path $agentsDir "ultracode-fusion-panel-a.md"
-  $panelBFile = Join-Path $agentsDir "ultracode-fusion-panel-b.md"
-  $arbiterFile = Join-Path $agentsDir "ultracode-fusion-arbiter.md"
-
-  $existingPanelA = Get-AgentModel $panelAFile
-  $existingPanelB = Get-AgentModel $panelBFile
-  $existingArbiter = Get-AgentModel $arbiterFile
+  New-Item -ItemType Directory -Path $skillsDir, $commandsDir, $agentsDir -Force | Out-Null
 
   $targetSkill = Join-Path $skillsDir "open-ultracode"
-  if (Test-Path $targetSkill) {
-    Remove-Item -Path $targetSkill -Recurse -Force
+  if (Test-Path $targetSkill) { Remove-Item -Path $targetSkill -Recurse -Force }
+  Copy-Item -Path (Join-Path $SourceDir ".opencode\skills\open-ultracode") -Destination $targetSkill -Recurse -Force
+
+  foreach ($name in $ShippedCommands) {
+    Copy-Item -Path (Join-Path $SourceDir ".opencode\commands\$name") -Destination $commandsDir -Force
   }
-  Copy-Item -Path (Join-Path $InstallDir ".opencode\skills\open-ultracode") -Destination $targetSkill -Recurse -Force
+  foreach ($name in $ShippedAgents) {
+    Copy-Item -Path (Join-Path $SourceDir ".opencode\agents\$name") -Destination $agentsDir -Force
+  }
+  foreach ($agent in $FusionAgents) {
+    Invoke-InstallerLib "Setting the $($agent.Name) model" set-agent-model (Join-Path $agentsDir $agent.Name) $models[$agent.Name]
+  }
+  Remove-LegacyGlobalFiles
 
-  Get-ChildItem -Path (Join-Path $InstallDir ".opencode\commands") -Filter "ultracode*.md" | Copy-Item -Destination $commandsDir -Force
-  Get-ChildItem -Path (Join-Path $InstallDir ".opencode\commands") -Filter "ultrathink*.md" | Copy-Item -Destination $commandsDir -Force
-  Get-ChildItem -Path (Join-Path $InstallDir ".opencode\agents") -Filter "open-ultracode*.md" | Copy-Item -Destination $agentsDir -Force
-  Get-ChildItem -Path (Join-Path $InstallDir ".opencode\agents") -Filter "ultracode-fusion*.md" | Copy-Item -Destination $agentsDir -Force
-  Copy-Item -Path (Join-Path $InstallDir ".opencode\tools\open_ultracode_configure_fusion.ts") -Destination $toolsDir -Force
-  Copy-Item -Path (Join-Path $InstallDir ".opencode\lib\fusion-config.ts") -Destination $libDir -Force
-
-  $chosenPanelA = if ($PanelA) { $PanelA } elseif ($existingPanelA) { $existingPanelA } else { $DefaultFusionPanelAModel }
-  $chosenPanelB = if ($PanelB) { $PanelB } elseif ($existingPanelB) { $existingPanelB } else { $DefaultFusionPanelBModel }
-  $chosenArbiter = if ($Decider) { $Decider } elseif ($existingArbiter) { $existingArbiter } else { $DefaultFusionArbiterModel }
-
-  Set-AgentModel $panelAFile $chosenPanelA
-  Set-AgentModel $panelBFile $chosenPanelB
-  Set-AgentModel $arbiterFile $chosenArbiter
-
-  Register-GlobalPlugin
+  $pluginPath = Join-Path $SourceDir ".opencode\plugins\open-ultracode"
+  Invoke-InstallerLib "Registering the OpenUltraCode plugin" register "--config-dir" $OpenCodeConfigDir "--plugin-path" $pluginPath
 }
 
-Download-LatestRelease
-Install-GlobalAssets
+function Remove-GlobalAssets {
+  $targetSkill = Join-Path $OpenCodeConfigDir "skills\open-ultracode"
+  if (Test-Path $targetSkill) { Remove-Item -Path $targetSkill -Recurse -Force }
+  # Remove only the files OpenUltraCode ships, never a user's own ultracode-* agents or commands.
+  foreach ($name in $ShippedCommands) {
+    Remove-Item -Path (Join-Path $OpenCodeConfigDir "commands\$name") -Force -ErrorAction SilentlyContinue
+  }
+  foreach ($name in $ShippedAgents) {
+    Remove-Item -Path (Join-Path $OpenCodeConfigDir "agents\$name") -Force -ErrorAction SilentlyContinue
+  }
+  Remove-LegacyGlobalFiles
+  Invoke-InstallerLib "Unregistering the OpenUltraCode plugin" unregister "--config-dir" $OpenCodeConfigDir
+}
+
+function Show-FusionModelMenu([string]$Prompt, [string]$DefaultModel, [string[]]$AvailableModels) {
+  $choices = [System.Collections.Generic.List[string]]::new()
+  $choices.Add($DefaultModel)
+  foreach ($model in $AvailableModels) {
+    if ($model -ne $DefaultModel -and -not $choices.Contains($model)) { $choices.Add($model) }
+  }
+  $choices.Add("Custom model ID")
+
+  $n = $choices.Count
+  $bufferWidth = [Console]::BufferWidth
+  $bufferHeight = [Console]::BufferHeight
+  $width = [int][Math]::Min([Console]::WindowWidth, $bufferWidth)
+  if ($width -lt 40) { $width = [int][Math]::Min(80, $bufferWidth) }
+  $maxLen = 0
+  foreach ($c in $choices) { if ($c.Length -gt $maxLen) { $maxLen = $c.Length } }
+  $colWidth = [int][Math]::Max(12, [Math]::Min(64, $maxLen + 4))
+  $cols = [int][Math]::Max(1, [Math]::Floor($width / $colWidth))
+  $rows = [int][Math]::Ceiling($n / $cols)
+  $windowRows = [int][Math]::Min([Console]::WindowHeight, $bufferHeight)
+  $visibleRows = [int][Math]::Min($rows, [Math]::Max(5, $windowRows - 6))
+  $needed = 2 + $visibleRows
+  $top = [Console]::CursorTop
+  if ($top + $needed -ge $bufferHeight) {
+    $scroll = $top + $needed - $bufferHeight + 1
+    for ($i = 0; $i -lt $scroll; $i++) { [Console]::WriteLine() }
+    $top = [Math]::Min([Console]::CursorTop, $bufferHeight - $needed)
+  }
+  if ($top -lt 0) { $top = 0 }
+  $bottomLine = [Math]::Min($top + 2 + $visibleRows, $bufferHeight - 1)
+  $index = 0
+  $offset = 0
+  $origFg = [Console]::ForegroundColor
+  $origBg = [Console]::BackgroundColor
+
+  [Console]::SetCursorPosition(0, $top)
+  [Console]::Write($Prompt.PadRight($width))
+  while ($true) {
+    for ($r = 0; $r -lt $visibleRows; $r++) {
+      $y = [Math]::Min($top + 1 + $r, $bufferHeight - 1)
+      [Console]::SetCursorPosition(0, $y)
+      $x = 0
+      for ($c = 0; $c -lt $cols; $c++) {
+        $i = $c * $rows + $offset + $r
+        if ($i -ge $n) { break }
+        $text = $choices[$i]
+        if ($text.Length -gt $colWidth - 4) { $text = $text.Substring(0, $colWidth - 7) + "..." }
+        $cell = $text.PadRight($colWidth - 2)
+        if ($i -eq $index) {
+          [Console]::ForegroundColor = [ConsoleColor]::Black
+          [Console]::BackgroundColor = [ConsoleColor]::Cyan
+          [Console]::Write($cell)
+          [Console]::ForegroundColor = $origFg
+          [Console]::BackgroundColor = $origBg
+        } else {
+          [Console]::Write($cell)
+        }
+        $x += $cell.Length
+      }
+      $rest = [Math]::Max(0, $width - $x)
+      if ($rest -gt 0) { [Console]::Write(" " * $rest) }
+    }
+    $above = $offset
+    $below = $rows - $offset - $visibleRows
+    $hint = "  "
+    if ($above -gt 0) { $hint += "^ $above more above   " }
+    if ($below -gt 0) { $hint += "v $below more below" }
+    $hy = [Math]::Min($top + 1 + $visibleRows, $bufferHeight - 1)
+    [Console]::SetCursorPosition(0, $hy)
+    [Console]::Write($hint.PadRight($width))
+    [Console]::SetCursorPosition(0, $bottomLine)
+
+    $key = [Console]::ReadKey($true)
+    if ($key.Key -eq [ConsoleKey]::C -and ($key.Modifiers -band [ConsoleModifiers]::Control)) {
+      [Console]::SetCursorPosition(0, $bottomLine)
+      throw "OpenUltraCode installation cancelled."
+    }
+    switch ($key.Key) {
+      UpArrow { $index = ($index - 1 + $n) % $n }
+      DownArrow { $index = ($index + 1) % $n }
+      LeftArrow { $index = (($index - $rows) % $n + $n) % $n }
+      RightArrow { $index = ($index + $rows) % $n }
+      Enter {
+        [Console]::SetCursorPosition(0, $bottomLine)
+        $picked = $choices[$index]
+        if ($picked -eq "Custom model ID") {
+          $custom = Read-Host "Enter provider/model or provider/model#max"
+          if ($custom -match $ModelIdPattern) { return $custom }
+          Write-Host "Invalid model ID: $custom"
+          continue
+        }
+        return $picked
+      }
+      default { }
+    }
+    $row = $index % $rows
+    if ($row -lt $offset) { $offset = $row }
+    if ($row -ge $offset + $visibleRows) { $offset = $row - $visibleRows + 1 }
+  }
+}
+
+function Test-OpenUltraCodeInstallDir([string]$Path) {
+  return (Test-Path (Join-Path $Path ".opencode\plugins\open-ultracode")) -and (Test-Path (Join-Path $Path "scripts\installer-lib.mjs"))
+}
+
+function Get-TarCommand {
+  # Prefer the Windows bsdtar: GNU tar from Git's usr\bin cannot handle "C:" paths.
+  if ($env:SystemRoot) {
+    $windowsTar = Join-Path $env:SystemRoot "System32\tar.exe"
+    if (Test-Path $windowsTar) { return $windowsTar }
+  }
+  if (Get-Command tar -ErrorAction SilentlyContinue) { return "tar" }
+  throw "tar is required to extract the release archive."
+}
+
+function Install-LatestRelease {
+  if ((Test-Path $InstallDir) -and (Get-ChildItem -Path $InstallDir -Force | Select-Object -First 1) -and -not (Test-Path (Join-Path $InstallDir ".opencode\plugins\open-ultracode"))) {
+    throw "Refusing to replace $InstallDir because it is not an OpenUltraCode installation. Choose another -InstallDir."
+  }
+
+  $id = [System.Guid]::NewGuid().ToString("N")
+  $parent = Split-Path -Parent $InstallDir
+  $stage = "$InstallDir.new-$id"
+  $previous = "$InstallDir.old-$id"
+  $downloadPath = Join-Path ([System.IO.Path]::GetTempPath()) "open-ultracode-$id.tar.gz"
+  $releaseUrl = "https://github.com/$Repo/releases/latest/download/open-ultracode-release.tar.gz"
+
+  try {
+    if ($Archive) {
+      Copy-Item -Path $Archive -Destination $downloadPath
+    } else {
+      Write-Host "Downloading latest OpenUltraCode release from $releaseUrl..."
+      $ProgressPreference = "SilentlyContinue"
+      [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+      try {
+        Invoke-WebRequest -Uri $releaseUrl -OutFile $downloadPath -UseBasicParsing
+      } catch {
+        throw "Could not download the latest OpenUltraCode release asset from ${releaseUrl}: $_"
+      }
+    }
+
+    New-Item -ItemType Directory -Path $parent, $stage -Force | Out-Null
+    $tar = Get-TarCommand
+    Invoke-Native "Extracting the release archive" { & $tar -xzf $downloadPath -C $stage }
+    if (-not (Test-OpenUltraCodeInstallDir $stage)) {
+      throw "The downloaded release archive is incomplete; the existing installation was left unchanged."
+    }
+
+    if (Test-Path $InstallDir) { Move-Item -Path $InstallDir -Destination $previous }
+    Move-Item -Path $stage -Destination $InstallDir
+  } finally {
+    Remove-Item -Path $downloadPath -Force -ErrorAction SilentlyContinue
+    if (Test-Path $stage) { Remove-Item -Path $stage -Recurse -Force -ErrorAction SilentlyContinue }
+    if ((Test-Path $previous) -and (Test-Path $InstallDir)) { Remove-Item -Path $previous -Recurse -Force -ErrorAction SilentlyContinue }
+  }
+}
+
+if ($Remove) {
+  if (-not (Test-Path $InstallerLib)) {
+    throw "$InstallDir does not contain an OpenUltraCode installation. Pass -InstallDir, or reinstall and then run -Remove."
+  }
+  Remove-GlobalAssets
+  if (Test-OpenUltraCodeInstallDir $InstallDir) {
+    Remove-Item -Path $InstallDir -Recurse -Force
+  }
+  Write-Host "OpenUltraCode has been removed from opencode. Restart opencode to unload the plugin, commands, skills, and agents."
+  return
+}
+
+$overrides = @{
+  "ultracode-fusion-panel-a.md" = $PanelA
+  "ultracode-fusion-panel-b.md" = $PanelB
+  "ultracode-fusion-arbiter.md" = $Decider
+}
+foreach ($entry in $overrides.GetEnumerator()) {
+  if ($entry.Value) { Assert-ModelId $entry.Value $entry.Key }
+}
+
+Install-LatestRelease
+Install-GlobalAssets $InstallDir $overrides
 
 Write-Host "OpenUltraCode is installed globally for opencode. Restart opencode to load the plugin, commands, skills, and agents."

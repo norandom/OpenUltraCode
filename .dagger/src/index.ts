@@ -3,7 +3,7 @@ import { dag, Directory, object, func } from "@dagger.io/dagger"
 @object()
 export class OpencodeUltracode {
   /**
-   * Run ESLint in the same container path used by CI and the pre-commit hook.
+   * Optional containerized ESLint run (`pnpm run lint:container`). The pre-commit hook and CI run `pnpm run lint` directly.
    */
   @func()
   async lint(source: Directory): Promise<string> {
@@ -12,10 +12,11 @@ export class OpencodeUltracode {
       .from("node:24-alpine")
       .withEnvVariable("CI", "true")
       .withExec(["corepack", "enable"])
-      .withMountedDirectory("/src", source)
+      // Host node_modules (possibly built for another OS) must not leak into the container.
+      .withMountedDirectory("/src", source.withoutDirectory("node_modules").withoutDirectory(".opencode/node_modules"))
       .withWorkdir("/src")
       .withExec(["pnpm", "install", "--frozen-lockfile"])
-      .withExec(["pnpm", "run", "eslint"])
+      .withExec(["pnpm", "run", "lint"])
       .stdout()
   }
 

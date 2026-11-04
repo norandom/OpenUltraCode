@@ -3,33 +3,22 @@
   "version": "1.2.0",
   "private": true,
   "type": "module",
-  "files": [
-    ".opencode",
-    "src",
-    "docs",
-    "scripts/validate-assets.ts",
-    "README.md",
-    "install.sh",
-    "install-dev.sh",
-    "install.ps1",
-    "install-dev.ps1",
-    "eslint.config.js",
-    "dagger.json",
-    ".dagger",
-    ".githooks",
-    "opencode.json",
-    "pnpm-workspace.yaml"
-  ],
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "tsc --noEmit",
-    "eslint": "eslint .",
-    "lint": "dagger call lint --source .",
-    "test": "node --import tsx --test tests/**/*.test.ts",
+    "lint": "eslint .",
+    "lint:container": "dagger call lint --source .",
+    "test": "node --import tsx --test \"tests/**/*.test.ts\"",
     "validate:assets": "tsx scripts/validate-assets.ts",
-    "check": "pnpm run build && pnpm run lint && pnpm run test && pnpm run validate:assets"
+    "validate:installers": "tsx scripts/validate-installers.ts",
+    "check": "tsx scripts/validate-assets.ts && tsx scripts/validate-installers.ts && tsc --noEmit && eslint . && node --import tsx --test \"tests/**/*.test.ts\"",
+    "prepare": "node scripts/install-git-hooks.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
+    "@opencode/plugin": "2.2.5",
     "@types/node": "^20.19.0",
     "eslint": "^9.39.4",
     "tsx": "^4.19.4",

@@ -23,14 +23,13 @@ const requiredScaffoldPaths = [
   "install-dev.ps1",
   "SECURITY.md",
   ".github/dependabot.yml",
+  ".github/workflows/ci.yml",
   ".github/workflows/release.yml",
   ".github/workflows/plugin-security-scan.yml",
   "src",
   ".opencode/plugins",
   ".opencode/plugins/open-ultracode",
   ".opencode/plugins/open-ultracode/index.ts",
-  ".opencode/tools",
-  ".opencode/tools/open_ultracode_configure_fusion.ts",
   ".opencode/lib",
   ".opencode/lib/fusion-config.ts",
   ".opencode/skills/open-ultracode",
@@ -38,7 +37,12 @@ const requiredScaffoldPaths = [
   ".opencode/commands",
   "docs",
   "tests",
-  "scripts/validate-assets.ts"
+  "scripts/validate-assets.ts",
+  "scripts/validate-installers.ts",
+  "scripts/installer-lib.mjs",
+  "scripts/model-menu.mjs",
+  "scripts/build-release-archive.mjs",
+  ".githooks/pre-commit"
 ] as const
 
 const requiredCommandAssets = [
@@ -78,7 +82,7 @@ export function validateAssets(root = process.cwd()): AssetValidationResult {
   }
 
   validatePlugin(root, errors)
-  validateFusionConfigTool(root, errors)
+  rejectLegacyToolsDirectory(root, errors)
   validateOpenCodeConfig(root, errors)
   validateComplianceControls(root, errors)
   validateSkill(root, errors)
@@ -222,7 +226,8 @@ function validateComplianceControls(root: string, errors: string[]): void {
 function validateImmutableActionReferences(relativePath: string, content: string, errors: string[]): void {
   for (const match of content.matchAll(/^\s*(?:-\s*)?uses:\s*([^\s#]+).*$/gmu)) {
     const reference = match[1]
-    if (reference !== undefined && !/@[0-9a-f]{40}$/u.test(reference)) {
+    // Local reusable workflows (./.github/workflows/*.yml) are versioned with the repository itself.
+    if (reference !== undefined && !reference.startsWith("./") && !/@[0-9a-f]{40}$/u.test(reference)) {
       errors.push(`${relativePath} action ${reference} must be pinned to a full commit SHA`)
     }
   }
@@ -264,25 +269,11 @@ function validateAgents(root: string, errors: string[]): void {
   }
 }
 
-function validateFusionConfigTool(root: string, errors: string[]): void {
-  const relativePath = ".opencode/tools/open_ultracode_configure_fusion.ts"
-  const content = readAsset(root, relativePath, errors)
-  if (content === undefined) return
-
-  for (const pattern of [
-    /from\s+["']@opencode-ai\/plugin["']/,
-    /export\s+default\s+tool\s*\(/,
-    /args\s*:/,
-    /panelA\s*:/,
-    /panelB\s*:/,
-    /decider\s*:/,
-    /\.optional\s*\(\s*\)/,
-    /configureFusionModels\s*\(/,
-    /context\.worktree/
-  ]) {
-    if (!pattern.test(content)) {
-      errors.push(`${relativePath} is missing required OpenCode tool structure: ${pattern.source}`)
-    }
+// OpenCode 2 does not load .opencode/tools; a V1 tool there would duplicate the
+// open_ultracode_configure_fusion tool that the plugin registers.
+function rejectLegacyToolsDirectory(root: string, errors: string[]): void {
+  if (existsSync(join(root, ".opencode", "tools"))) {
+    errors.push(".opencode/tools must not exist; the plugin registers open_ultracode_configure_fusion")
   }
 }
 

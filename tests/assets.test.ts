@@ -13,8 +13,6 @@ const requiredScaffoldPaths = [
   ".opencode/plugins",
   ".opencode/plugins/open-ultracode",
   ".opencode/plugins/open-ultracode/index.ts",
-  ".opencode/tools",
-  ".opencode/tools/open_ultracode_configure_fusion.ts",
   ".opencode/lib",
   ".opencode/lib/fusion-config.ts",
   ".opencode/skills/open-ultracode",
@@ -23,6 +21,11 @@ const requiredScaffoldPaths = [
   "docs",
   "tests",
   "scripts/validate-assets.ts",
+  "scripts/validate-installers.ts",
+  "scripts/installer-lib.mjs",
+  "scripts/model-menu.mjs",
+  "scripts/build-release-archive.mjs",
+  ".githooks/pre-commit",
   "install.sh",
   "install-dev.sh",
   "install.ps1",
@@ -70,39 +73,29 @@ describe("OpenUltraCode scaffold", () => {
     assert.equal("provider" in config, false)
     assert.equal(manifest.packageManager, "pnpm@11.4.0")
     assert.equal(manifest.version, "1.2.0")
-    assert.equal(scripts.eslint, "eslint .")
-    assert.equal(scripts.lint, "dagger call lint --source .")
-    assert.equal(scripts.check, "pnpm run build && pnpm run lint && pnpm run test && pnpm run validate:assets")
+    // One offline quality gate shared by the pre-commit hook, CI, and install-dev; Docker is optional.
+    assert.equal(scripts.lint, "eslint .")
+    assert.equal(scripts["lint:container"], "dagger call lint --source .")
+    // check calls the tools directly: nested `pnpm run` grows PATH past cmd.exe limits on Windows.
+    assert.equal(scripts.check, [scripts["validate:assets"], scripts["validate:installers"], scripts.build, scripts.lint, scripts.test].join(" && "))
+    assert.match(String(scripts.test), /--test "tests\/\*\*\/\*\.test\.ts"/u)
+    assert.match(String(scripts.prepare), /install-git-hooks/u)
     assert.match(pnpmWorkspace, /^allowBuilds:\r?\n {2}esbuild: true$/m)
     assert.match(pnpmWorkspace, /^minimumReleaseAge: 4320$/m)
-    assert.match(installer, /OPENCODE_CONFIG_DIR="\$\{OPENCODE_CONFIG_DIR:-\$HOME\/\.config\/opencode\}"/)
-    assert.match(installer, /DEFAULT_FUSION_PANEL_A_MODEL="mistral\/mistral-large-4#max"/)
-    assert.match(installer, /DEFAULT_FUSION_PANEL_B_MODEL="mistral\/mistral-large-4#max"/)
-    assert.match(installer, /DEFAULT_FUSION_ARBITER_MODEL="mistral\/mistral-large-4#max"/)
-    assert.match(installer, /MISTRAL_GLM_5_3_FUSION_MODEL="mistral\/zai-glm-5-3#max"/)
-    assert.match(installer, /config\.plugins\.push\(\{ package: pluginPath \}\)/)
-    assert.match(installer, /legacyFusionPlaceholders/)
-    assert.match(devInstaller, /legacyFusionPlaceholders/)
-    assert.match(psInstaller, /DefaultFusionPanelAModel = "opencode\/deepseek-v4-pro#max"/)
-    assert.match(psInstaller, /DefaultFusionPanelBModel = "opencode\/glm-5\.2#max"/)
-    assert.match(psInstaller, /DefaultFusionArbiterModel = "opencode\/kimi-k3#max"/)
-    assert.match(psInstaller, /legacyFusionPlaceholders/)
-    assert.match(psDevInstaller, /legacyFusionPlaceholders/)
-    assert.match(installer, /read_current_model\(\)/)
-    assert.match(installer, /select_from_menu\(\)/)
+    for (const shInstaller of [installer, devInstaller]) {
+      assert.match(shInstaller, /OPENCODE_CONFIG_DIR="\$\{OPENCODE_CONFIG_DIR:-\$HOME\/\.config\/opencode\}"/)
+    }
+    for (const anyInstaller of [installer, devInstaller, psInstaller, psDevInstaller]) {
+      // Default fusion models come from the shipped agent files, not from per-installer constants.
+      assert.doesNotMatch(anyInstaller, /DEFAULT_FUSION|DefaultFusion/u)
+      assert.match(anyInstaller, /get-agent-model/u)
+    }
     assert.match(installer, /releases\/latest\/download\/open-ultracode-release\.tar\.gz/)
-    assert.match(installer, /\.opencode\/skills\/open-ultracode/)
-    assert.match(installer, /\.opencode\/commands\/ultracode\*\.md/)
-    assert.match(installer, /\.opencode\/commands\/ultrathink\*\.md/)
-    assert.match(installer, /\.opencode\/agents\/open-ultracode\*\.md/)
-    assert.match(installer, /\.opencode\/agents\/ultracode-fusion\*\.md/)
-    assert.match(installer, /\.opencode\/tools\/open_ultracode_configure_fusion\.ts/)
-    assert.match(installer, /\.opencode\/lib\/fusion-config\.ts/)
-    assert.match(installer, /OPENCODE_PLUGIN_PATH/)
     assert.match(devInstaller, /pnpm install --frozen-lockfile/)
     assert.match(devInstaller, /pnpm run check/)
     assert.match(devInstaller, /git config core\.hooksPath \.githooks/)
     assert.match(psDevInstaller, /pnpm install --frozen-lockfile/)
+    assert.match(releaseWorkflow, /scripts\/build-release-archive\.mjs/)
     assert.match(releaseWorkflow, /open-ultracode-release\.tar\.gz/)
     assert.match(releaseWorkflow, /gh release create/)
     assert.match(releaseWorkflow, /--prerelease/)
@@ -116,23 +109,9 @@ describe("OpenUltraCode scaffold", () => {
     assert.match(dependabot, /package-ecosystem: "github-actions"/)
     assert.match(securityPolicy, /security\/advisories\/new/)
 
-    assert.deepEqual(manifest.files, [
-      ".opencode",
-      "src",
-      "docs",
-      "scripts/validate-assets.ts",
-      "README.md",
-      "install.sh",
-      "install-dev.sh",
-      "install.ps1",
-      "install-dev.ps1",
-      "eslint.config.js",
-      "dagger.json",
-      ".dagger",
-      ".githooks",
-      "opencode.json",
-      "pnpm-workspace.yaml"
-    ])
+    // The release archive is defined by scripts/build-release-archive.mjs; package.json must not
+    // carry a second, diverging file list.
+    assert.equal("files" in manifest, false)
   })
 
   it("rejects missing required opencode assets", () => {
@@ -244,7 +223,6 @@ function createAssetFixture(): string {
     "src",
     ".opencode/plugins",
     ".opencode/plugins/open-ultracode",
-    ".opencode/tools",
     ".opencode/lib",
     ".opencode/skills/open-ultracode",
     ".opencode/agents",
@@ -261,11 +239,9 @@ function createAssetFixture(): string {
     version: "0.1.1",
     packageManager: "pnpm@11.4.0",
     scripts: {
-      eslint: "eslint .",
-      lint: "dagger call lint --source .",
-      check: "pnpm run build && pnpm run lint && pnpm run test && pnpm run validate:assets"
-    },
-    files: [".opencode", "src", "docs", "scripts/validate-assets.ts", "README.md", "install.sh", "install-dev.sh", "install.ps1", "install-dev.ps1", "eslint.config.js", "dagger.json", ".dagger", ".githooks", "opencode.json", "pnpm-workspace.yaml"]
+      lint: "eslint .",
+      check: "pnpm run validate:assets && pnpm run validate:installers && pnpm run build && pnpm run lint && pnpm run test"
+    }
   }))
   writeFileSync(
     join(root, "opencode.json"),
@@ -301,10 +277,12 @@ updates:
   - package-ecosystem: "github-actions"
 `)
   writeFileSync(join(root, "pnpm-workspace.yaml"), "allowBuilds:\n  esbuild: true\nminimumReleaseAge: 4320\n")
-  writeFileSync(join(root, "scripts/validate-assets.ts"), "")
+  for (const script of ["validate-assets.ts", "validate-installers.ts", "installer-lib.mjs", "model-menu.mjs", "build-release-archive.mjs"]) {
+    writeFileSync(join(root, "scripts", script), "")
+  }
+  writeFileSync(join(root, ".github/workflows/ci.yml"), "on: [push]\n")
 
   writeFileSync(join(root, ".opencode/plugins/open-ultracode/index.ts"), "export { default } from \"../../../src/plugin.js\"\n")
-  writeFileSync(join(root, ".opencode/tools/open_ultracode_configure_fusion.ts"), fusionConfigToolAsset())
   writeFileSync(join(root, ".opencode/lib/fusion-config.ts"), "export async function configureFusionModels() {}\n")
   writeFileSync(join(root, ".opencode/skills/open-ultracode/SKILL.md"), skillAsset())
   for (const command of [
@@ -373,24 +351,6 @@ description: Configure fusion models.
 ---
 
 Use $ARGUMENTS with provider/model references. Keep the selected model unchanged and call open_ultracode_configure_fusion.
-`
-}
-
-function fusionConfigToolAsset(): string {
-  return `import { tool } from "@opencode-ai/plugin"
-import { configureFusionModels } from "../lib/fusion-config.js"
-
-export default tool({
-  description: "Configure fusion models.",
-  args: {
-    panelA: tool.schema.string().optional(),
-    panelB: tool.schema.string().optional(),
-    decider: tool.schema.string().optional()
-  },
-  async execute(args, context) {
-    return configureFusionModels(context.worktree, args)
-  }
-})
 `
 }
 

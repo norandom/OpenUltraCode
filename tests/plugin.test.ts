@@ -346,8 +346,12 @@ describe("OpenUltraCode OpenCode 2 plugin entry point", () => {
     ctx.permissionRequests.set("per_1", { action: "shell", resources: ["npm test"], message: "shell command was rejected" })
 
     ctx.emit({ type: "permission.replied", data: { sessionID: "session-1", requestID: "per_1", reply: "reject" } })
-    await new Promise((resolve) => setTimeout(resolve, 10))
-    const status = await executeTool(ctx, "open_ultracode_status", {}) as { phase: string; degradations: string[] }
+    // The event loop records the rejection asynchronously; poll instead of sleeping a fixed time.
+    let status = { phase: "", degradations: [] as string[] }
+    for (const deadline = Date.now() + 5000; status.phase !== "blocked" && Date.now() < deadline;) {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      status = await executeTool(ctx, "open_ultracode_status", {}) as typeof status
+    }
 
     assert.equal(status.phase, "blocked")
     assert.deepEqual(status.degradations, ["D-1", "permission-denied-shell-npm-test"])

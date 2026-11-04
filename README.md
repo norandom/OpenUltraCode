@@ -29,6 +29,16 @@ irm https://raw.githubusercontent.com/norandom/OpenUltraCode/main/install.ps1 | 
 
 The installer pulls the latest GitHub release asset, copies the skill, slash commands, and agents into `~/.config/opencode/`, runs the init dialogue that asks which fusion model IDs to set, and registers the plugin package directory in the `plugins` array of `~/.config/opencode/opencode.json`. OpenCode 2 loads local plugins from directories (for example `.opencode/plugins/open-ultracode/index.ts`) via `{ "package": "<path>" }` entries, not from single `.ts` files under the V1 `plugin` key.
 
+How the installers treat your configuration:
+
+- Only OpenUltraCode's own entries are added or removed. Other plugins, permission rules, and settings in `opencode.json` and `opencode.jsonc` (comments, trailing commas, and a BOM are accepted) stay as they are, and a timestamped `.backup-openultracode-*` copy is written before a file changes.
+- Stale OpenUltraCode entries from older releases, in either file and with forward or backslash paths, are replaced by exactly one entry, so the plugin loads once.
+- The release archive is downloaded and checked next to the install directory before it replaces the old installation; a failed download or extraction leaves the working install in place. The installer refuses to replace a directory that is not an OpenUltraCode installation.
+- All fusion models are chosen before any file is copied, so cancelling the menu (Ctrl+C, Esc) changes nothing. Without a terminal (CI, `--non-interactive` / `-NonInteractive`) the installed models are kept, or the shipped defaults are used.
+- Every step that fails stops the installer with a non-zero exit code; it never reports success after a failed check.
+
+Installer options: `--non-interactive`, `--panel-a`/`--panel-b`/`--decider <provider/model>`, and `--archive <file>` for an offline install from a downloaded `open-ultracode-release.tar.gz` (PowerShell: `-NonInteractive`, `-PanelA`/`-PanelB`/`-Decider`, `-Archive`).
+
 ### Development install
 
 From a checkout of this repo:
@@ -45,7 +55,18 @@ Windows (PowerShell):
 .\install-dev.ps1
 ```
 
-`install-dev.sh` also configures the repository pre-commit hook to run Dagger-backed ESLint through `pnpm run lint`.
+The development installers run `pnpm install` and `pnpm run check` first (skip with `--skip-checks` / `-SkipChecks`) and stop if a check fails.
+
+### Quality gates
+
+`pnpm run check` is the single gate used by the pre-commit hook, CI, and the development installers. It runs offline and needs no Docker:
+
+- asset and installer validators (`scripts/validate-assets.ts`, `scripts/validate-installers.ts`);
+- `tsc`, including a contract test that type-checks the plugin against the real `@opencode/plugin` API;
+- ESLint (`pnpm run lint`; the containerized Dagger run is optional as `pnpm run lint:container`);
+- the test suite, including `sh`/`dash`/`shellcheck` and PowerShell 7/5.1 syntax checks for the installers and real installer runs against temporary config directories.
+
+`pnpm install` enables the versioned `.githooks/pre-commit` hook (`core.hooksPath`). The hook refuses commits whose staged files differ from the working tree or that leave project files untracked, then runs `pnpm run check`. CI (`.github/workflows/ci.yml`) runs the same gate on Linux, macOS, and Windows with Node 22 and 24; releases run CI first. Set `OPENULTRACODE_E2E_SH=1` to also run the `sh` installers end to end on Windows.
 
 ### Restart opencode
 
@@ -53,8 +74,30 @@ Quit and restart opencode so the global plugin, commands, skills, and agents are
 
 ### Install notes
 
-- **Release installs** do not run Dagger or `pnpm run check` on your machine. The GitHub Actions release workflow runs build, ESLint, tests, and asset validation, then publishes `open-ultracode-release.tar.gz` as the GitHub release asset, which `install.sh` / `install.ps1` consume.
+- **Release installs** do not run `pnpm run check` on your machine. The GitHub Actions release workflow runs the CI gate, builds `open-ultracode-release.tar.gz` with `scripts/build-release-archive.mjs` (the single list of shipped files), and publishes it with a SHA-256 checksum as the GitHub release asset, which `install.sh` / `install.ps1` consume. Manual workflow runs are published as prereleases so they never become the latest release.
 - **Development installs** use pnpm with a 3-day release-age cooldown (`minimumReleaseAge: 4320` in `pnpm-workspace.yaml`) to keep brand-new package releases out of the install path. `pnpm-workspace.yaml` allows the `esbuild` install script because the TypeScript test runner needs it.
+
+### Removal
+
+Every installer also removes OpenUltraCode. Removal deletes the copied skill and exactly the slash commands and agents OpenUltraCode ships (your own `ultracode-*` agents and commands stay) from `~/.config/opencode/`, removes the `{ "package": ".../.opencode/plugins/open-ultracode" }` entry and the fusion permission rule from `opencode.json` (leaving other plugins untouched), and — for release installs — deletes the downloaded release directory. Restart opencode afterwards.
+
+Linux / macOS (sh):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/norandom/OpenUltraCode/main/install.sh | sh -s -- --remove
+# or from a checkout:
+./install.sh -remove        # release layout
+./install-dev.sh --remove   # dev checkout (leaves the checkout in place)
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/norandom/OpenUltraCode/main/install.ps1 -OutFile install.ps1
+.\install.ps1 -Remove
+# or from a checkout:
+.\install-dev.ps1 -Remove   # dev checkout (leaves the checkout in place)
+```
 
 ## What you get
 
@@ -146,7 +189,7 @@ The bundled defaults are Mistral Large 4 at its native maximum-reasoning variant
 - `ultracode-fusion-panel-b`: `mistral/mistral-large-4#max`.
 - `ultracode-fusion-arbiter`: `mistral/mistral-large-4#max`.
 
-The init dialogue in `install.sh` asks which model each fusion role should use. It reads the current `model` from `~/.config/opencode/opencode.json`, then lets you choose each fusion role with a small terminal menu using the up and down arrows. The default for panel A, panel B, and arbiter is `mistral/mistral-large-4#max`; the menu also offers Z.ai GLM 5.3 through the Mistral endpoint as `mistral/zai-glm-5-3#max`, plus the current opencode model or a custom `provider/model#max` reference. Fresh non-interactive installs use the Mistral defaults; reinstalls preserve each role's existing value.
+The init dialogue in `install.sh`, `install-dev.sh`, `install.ps1`, and `install-dev.ps1` asks which model each fusion role should use. All four installers first detect the valid model IDs from your own opencode setup by running `opencode models`, so the menu only offers `provider/model` references your configured providers actually expose (for example your `vibe-oidc/mistral-*` models). The picker is a multi-column arrow-key menu that scrolls, so the full detected list is reachable. The default for every role comes from the shipped fusion agent files (Mistral Large 4 as `mistral/mistral-large-4#max`) on every installer; a role that is already installed keeps its current model as the default. The menu also offers a custom `provider/model#max` entry, for example Z.ai GLM 5.3 through the Mistral endpoint as `mistral/zai-glm-5-3#max`. When raw keyboard input is unavailable (pipes, mintty), the sh installers fall back to a numbered prompt. The chosen IDs are written into the fusion agent files' `model:` frontmatter during install. Fresh non-interactive installs use the defaults; reinstalls preserve each role's existing value. Skip the dialogue with `--panel-a`, `--panel-b`, `--decider`, and `--non-interactive` (PowerShell: `-PanelA`, `-PanelB`, `-Decider`, `-NonInteractive`).
 
 Show the effective configuration or change any subset of the roles from opencode:
 

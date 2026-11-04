@@ -28,7 +28,12 @@ const docs: readonly DocExpectation[] = [
       /OpenCode 2/i,
       /plugins.*package|package.*plugins/is,
       /\/ultracode-fusion-models/i,
-      /up and down arrows/i,
+      /opencode models/i,
+      /multi-column/i,
+      /### Removal/,
+      /-remove/,
+      /-Remove/,
+      /install\.ps1.*-Remove|\.\\install\.ps1 -Remove/is,
       /^1\. Install the latest release with `curl -fsSL https:\/\/raw\.githubusercontent\.com\/norandom\/OpenUltraCode\/main\/install\.sh \| sh`\./im,
       /~\/\.config\/opencode/i,
       /global plugin, commands, skills, and agents/i,
@@ -78,7 +83,10 @@ const docs: readonly DocExpectation[] = [
       /permission/i,
       /troubleshooting/i,
       /sensitive/i,
-      /explicitly requests/i
+      /explicitly requests/i,
+      /## Uninstall/,
+      /-remove/,
+      /-Remove/
     ]
   }
 ] as const

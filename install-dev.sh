@@ -1,153 +1,189 @@
 #!/usr/bin/env sh
 set -eu
+# Model IDs and paths are never meant to be glob patterns.
+set -f
 
+REPO_ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
+cd "$REPO_ROOT"
+: "${HOME:?HOME must be set}"
 OPENCODE_CONFIG_DIR="${OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}"
+INSTALLER_LIB="$REPO_ROOT/scripts/installer-lib.mjs"
+MODEL_MENU="$REPO_ROOT/scripts/model-menu.mjs"
 
-ensure_pnpm() {
-  if command -v pnpm >/dev/null 2>&1; then
-    return
-  fi
+# Files OpenUltraCode ships; tests/installer-assets.test.ts keeps these lists in sync with .opencode.
+SHIPPED_COMMANDS="ultracode-debug.md ultracode-fusion-models.md ultracode-fusion.md ultracode-research.md ultracode-spec-audit.md ultracode-verify.md ultracode.md ultrathink-fusion.md ultrathink.md"
+SHIPPED_AGENTS="open-ultracode-adversary.md open-ultracode-implementer.md open-ultracode-planner.md open-ultracode-reconciler.md open-ultracode-researcher.md open-ultracode-verifier.md open-ultracode.md ultracode-fusion-arbiter.md ultracode-fusion-panel-a.md ultracode-fusion-panel-b.md"
+FUSION_AGENTS="ultracode-fusion-panel-a.md ultracode-fusion-panel-b.md ultracode-fusion-arbiter.md"
 
-  if command -v corepack >/dev/null 2>&1; then
-    corepack enable
-  fi
+usage() {
+  cat <<'USAGE'
+Usage: install-dev.sh [--remove] [--non-interactive] [--skip-checks] [-h|--help]
 
-  if ! command -v pnpm >/dev/null 2>&1; then
-    echo "pnpm is required. Enable it with 'corepack enable' or install pnpm, then rerun ./install-dev.sh." >&2
-    exit 1
-  fi
+Installs OpenUltraCode for opencode from this checkout.
+Options:
+  -remove, --remove, -r   Remove OpenUltraCode from opencode instead of installing.
+  --non-interactive       Do not prompt; keep installed fusion models or use the shipped defaults.
+  --skip-checks           Skip pnpm install and pnpm run check.
+  -h, --help              Show this help.
+USAGE
 }
 
-read_agent_model() {
-  agent_file="$1"
-  if [ ! -f "$agent_file" ]; then
-    return
+REMOVE=0
+NON_INTERACTIVE=0
+SKIP_CHECKS=0
+for arg in "$@"; do
+  case "$arg" in
+    -remove|--remove|-r) REMOVE=1 ;;
+    --non-interactive) NON_INTERACTIVE=1 ;;
+    --skip-checks) SKIP_CHECKS=1 ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $arg" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+fail() {
+  echo "OpenUltraCode: $*" >&2
+  exit 1
+}
+
+lib() {
+  node "$INSTALLER_LIB" "$@"
+}
+
+detect_opencode_models() {
+  if ! command -v opencode >/dev/null 2>&1; then
+    return 0
   fi
-
-  AGENT_FILE="$agent_file" node <<'NODE'
-const fs = require("node:fs")
-
-const file = process.env.AGENT_FILE
-if (!file) process.exit(0)
-const content = fs.readFileSync(file, "utf8")
-const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(content)?.[1]
-const model = frontmatter === undefined ? undefined : /^model:[ \t]*(\S+)[ \t]*$/m.exec(frontmatter)?.[1]
-const legacyFusionPlaceholders = new Set(["provider/model-a", "provider/model-b", "provider/arbiter-model"])
-const baseModel = model?.replace(/#[^#]+$/, "")
-if (baseModel !== undefined && !legacyFusionPlaceholders.has(baseModel)) {
-  process.stdout.write(`${baseModel}#max`)
-}
-NODE
+  opencode models </dev/null 2>/dev/null | tr -d '\r' | grep -E '^[A-Za-z0-9][A-Za-z0-9._-]*/[^[:space:]#]+$' || true
 }
 
-restore_agent_model() {
-  agent_file="$1"
-  model="$2"
-  if [ -z "$model" ]; then
-    return
+has_tty() {
+  [ "$NON_INTERACTIVE" -eq 0 ] && (: </dev/tty >/dev/tty) 2>/dev/null
+}
+
+agent_prompt() {
+  case "$1" in
+    ultracode-fusion-panel-a.md) echo "Choose fusion panel A model" ;;
+    ultracode-fusion-panel-b.md) echo "Choose fusion panel B model" ;;
+    *) echo "Choose fusion arbiter model" ;;
+  esac
+}
+
+# Prints the chosen model. Always called as $(choose_model ...) || exit $? because bash
+# does not apply set -e inside command substitutions.
+choose_model() {
+  if ! has_tty; then
+    printf '%s: using %s\n' "$1" "$2" >&2
+    printf '%s' "$2"
+    return 0
   fi
-
-  AGENT_FILE="$agent_file" AGENT_MODEL="$model" node <<'NODE'
-const fs = require("node:fs")
-
-const file = process.env.AGENT_FILE
-const model = process.env.AGENT_MODEL
-if (!file || !model) throw new Error("missing fusion model restore input")
-if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\/[^\s#]+#max$/.test(model)) {
-  throw new Error(`${model} must be provider/model#max`)
+  # shellcheck disable=SC2086 # one detected model per word
+  node "$MODEL_MENU" "$1" "$2" $DETECTED_MODELS </dev/tty 2>/dev/tty || return $?
 }
-const content = fs.readFileSync(file, "utf8")
-const baseModel = model.replace(/#[^#]+$/, "")
-let updated = content.replace(/^model:[^\r\n]+$/m, `model: ${baseModel}`)
-updated = /^variant:/m.test(updated)
-  ? updated.replace(/^variant:.*$/m, "variant: max")
-  : updated.replace(/^model:.*$/m, (line) => `${line}\nvariant: max`)
-fs.writeFileSync(file, updated)
-NODE
+
+# Chooses every fusion model before anything is copied, so a cancelled menu or an invalid
+# model leaves the existing installation untouched.
+resolve_fusion_models() {
+  source_agents="$1"
+  RESOLVED_MODELS=""
+  DETECTED_MODELS=""
+  if has_tty; then
+    DETECTED_MODELS=$(detect_opencode_models)
+  fi
+  for agent in $FUSION_AGENTS; do
+    default_model=$(lib get-agent-model "$source_agents/$agent") || exit $?
+    [ -n "$default_model" ] || fail "shipped agent $agent has no default model"
+    current_model=$(lib get-agent-model "$OPENCODE_CONFIG_DIR/agents/$agent") || exit $?
+    model=$(choose_model "$(agent_prompt "$agent")" "${current_model:-$default_model}") || exit $?
+    lib validate-model "$model"
+    RESOLVED_MODELS="$RESOLVED_MODELS $agent=$model"
+  done
+}
+
+model_for() {
+  for pair in $RESOLVED_MODELS; do
+    case "$pair" in
+      "$1="*) printf '%s' "${pair#*=}" ;;
+    esac
+  done
+}
+
+remove_legacy_global_files() {
+  # OpenCode 2 does not load ~/.config/opencode/tools; the plugin registers the fusion tool itself.
+  rm -f "$OPENCODE_CONFIG_DIR/tools/open_ultracode_configure_fusion.ts" "$OPENCODE_CONFIG_DIR/lib/fusion-config.ts"
 }
 
 install_global_assets() {
-  mkdir -p "$OPENCODE_CONFIG_DIR/skills" "$OPENCODE_CONFIG_DIR/commands" "$OPENCODE_CONFIG_DIR/agents" "$OPENCODE_CONFIG_DIR/tools" "$OPENCODE_CONFIG_DIR/lib"
+  source_dir="$1"
+  resolve_fusion_models "$source_dir/.opencode/agents"
 
-  existing_panel_a=$(read_agent_model "$OPENCODE_CONFIG_DIR/agents/ultracode-fusion-panel-a.md" || true)
-  existing_panel_b=$(read_agent_model "$OPENCODE_CONFIG_DIR/agents/ultracode-fusion-panel-b.md" || true)
-  existing_arbiter=$(read_agent_model "$OPENCODE_CONFIG_DIR/agents/ultracode-fusion-arbiter.md" || true)
-
+  mkdir -p "$OPENCODE_CONFIG_DIR/skills" "$OPENCODE_CONFIG_DIR/commands" "$OPENCODE_CONFIG_DIR/agents"
   rm -rf "$OPENCODE_CONFIG_DIR/skills/open-ultracode"
-  cp -R ".opencode/skills/open-ultracode" "$OPENCODE_CONFIG_DIR/skills/open-ultracode"
-  cp .opencode/commands/ultracode*.md "$OPENCODE_CONFIG_DIR/commands/"
-  cp .opencode/commands/ultrathink*.md "$OPENCODE_CONFIG_DIR/commands/"
-  cp .opencode/agents/open-ultracode*.md "$OPENCODE_CONFIG_DIR/agents/"
-  cp .opencode/agents/ultracode-fusion*.md "$OPENCODE_CONFIG_DIR/agents/"
-  cp .opencode/tools/open_ultracode_configure_fusion.ts "$OPENCODE_CONFIG_DIR/tools/"
-  cp .opencode/lib/fusion-config.ts "$OPENCODE_CONFIG_DIR/lib/"
+  cp -R "$source_dir/.opencode/skills/open-ultracode" "$OPENCODE_CONFIG_DIR/skills/open-ultracode"
+  for name in $SHIPPED_COMMANDS; do
+    cp "$source_dir/.opencode/commands/$name" "$OPENCODE_CONFIG_DIR/commands/$name"
+  done
+  for name in $SHIPPED_AGENTS; do
+    cp "$source_dir/.opencode/agents/$name" "$OPENCODE_CONFIG_DIR/agents/$name"
+  done
+  for agent in $FUSION_AGENTS; do
+    lib set-agent-model "$OPENCODE_CONFIG_DIR/agents/$agent" "$(model_for "$agent")"
+  done
+  remove_legacy_global_files
 
-  restore_agent_model "$OPENCODE_CONFIG_DIR/agents/ultracode-fusion-panel-a.md" "$existing_panel_a"
-  restore_agent_model "$OPENCODE_CONFIG_DIR/agents/ultracode-fusion-panel-b.md" "$existing_panel_b"
-  restore_agent_model "$OPENCODE_CONFIG_DIR/agents/ultracode-fusion-arbiter.md" "$existing_arbiter"
-
-  register_global_plugin
+  lib register --config-dir "$OPENCODE_CONFIG_DIR" --plugin-path "$source_dir/.opencode/plugins/open-ultracode"
 }
 
-register_global_plugin() {
-  config_file="$OPENCODE_CONFIG_DIR/opencode.json"
-  plugin_path="$(pwd -P)/.opencode/plugins/open-ultracode"
-  mkdir -p "$OPENCODE_CONFIG_DIR"
+remove_global_assets() {
+  rm -rf "$OPENCODE_CONFIG_DIR/skills/open-ultracode"
+  # Remove only the files OpenUltraCode ships, never a user's own ultracode-* agents or commands.
+  for name in $SHIPPED_COMMANDS; do
+    rm -f "$OPENCODE_CONFIG_DIR/commands/$name"
+  done
+  for name in $SHIPPED_AGENTS; do
+    rm -f "$OPENCODE_CONFIG_DIR/agents/$name"
+  done
+  remove_legacy_global_files
+  lib unregister --config-dir "$OPENCODE_CONFIG_DIR"
+}
 
-  if [ ! -f "$config_file" ]; then
-    printf '{\n  "$schema": "https://opencode.ai/config.json"\n}\n' >"$config_file"
+ensure_pnpm() {
+  if command -v pnpm >/dev/null 2>&1; then
+    return 0
   fi
-
-  OPENCODE_GLOBAL_CONFIG="$config_file" OPENCODE_PLUGIN_PATH="$plugin_path" node <<'NODE'
-const fs = require("node:fs")
-
-const configPath = process.env.OPENCODE_GLOBAL_CONFIG
-const pluginPath = process.env.OPENCODE_PLUGIN_PATH
-if (!configPath || !pluginPath) {
-  throw new Error("missing OpenUltraCode installer environment")
+  if command -v corepack >/dev/null 2>&1; then
+    corepack enable || echo "OpenUltraCode: 'corepack enable' failed" >&2
+  fi
+  command -v pnpm >/dev/null 2>&1 || fail "pnpm is required. Enable it with 'corepack enable' or install pnpm, then rerun ./install-dev.sh."
 }
 
-let config = {}
-try {
-  config = JSON.parse(fs.readFileSync(configPath, "utf8"))
-} catch (error) {
-  throw new Error(`Could not parse ${configPath}: ${error instanceof Error ? error.message : String(error)}`)
+enable_git_hooks() {
+  if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git config core.hooksPath .githooks
+  fi
 }
 
-if (typeof config !== "object" || config === null || Array.isArray(config)) {
-  throw new Error(`${configPath} must contain a JSON object`)
-}
+command -v node >/dev/null 2>&1 || fail "node is required for OpenUltraCode install."
 
-config.$schema ??= "https://opencode.ai/config.json"
-// OpenCode 2: permissions use one ordered array, and local plugins load from
-// directories through the plugins array in object form. Drop V1 shapes.
-delete config.permission
-const permissions = Array.isArray(config.permissions) ? config.permissions : []
-const fusionRule = { action: "open_ultracode_configure_fusion", resource: "*", effect: "ask" }
-if (!permissions.some((entry) => entry && entry.action === fusionRule.action)) {
-  permissions.push(fusionRule)
-}
-config.permissions = permissions
-
-delete config.plugin
-const existing = Array.isArray(config.plugins) ? config.plugins : []
-config.plugins = existing.filter(
-  (entry) => !(typeof entry === "string" && entry.includes("/.opencode/plugins/open-ultracode")) &&
-    !(typeof entry === "object" && entry !== null && entry.package === pluginPath)
-)
-config.plugins.push({ package: pluginPath })
-
-fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`)
-NODE
-}
-
-ensure_pnpm
-pnpm install --frozen-lockfile
-pnpm run check
-install_global_assets
-
-if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  git config core.hooksPath .githooks
+if [ "$REMOVE" -eq 1 ]; then
+  remove_global_assets
+  echo "OpenUltraCode has been removed from opencode. Restart opencode to unload the plugin, commands, skills, and agents. This checkout was left in place."
+  exit 0
 fi
+
+if [ "$SKIP_CHECKS" -eq 0 ]; then
+  ensure_pnpm
+  pnpm install --frozen-lockfile
+  pnpm run check
+fi
+install_global_assets "$REPO_ROOT"
+enable_git_hooks
 
 echo "OpenUltraCode is installed globally for opencode from this checkout. Restart opencode to load the plugin, commands, skills, and agents."
