@@ -15,6 +15,7 @@ import {
   createRecordVerificationTool
 } from "./verification-tool.js"
 import { createRecordIntakeTool, readWorkflowCommand, recordIntakeInputSchema, startWorkflow } from "./workflow.js"
+import { analyzeFusionModels, describeFusionModelIssue, fusionRoleLabel, type FusionModelIssue } from "./fusion-models.js"
 import type {
   ModelInfoSummary,
   ModelRef,
@@ -63,7 +64,7 @@ export async function registerOpenUltraCode(
     })),
     ctx.session.hook("prompt", guarded("prompt hook", async (event: SessionPromptEvent) => {
       await activateWorkflow(stateStore, event)
-      await checkFusionVariants(catalog, stateStore, projectDirectory, event)
+      await checkFusionModels(catalog, stateStore, projectDirectory, event)
     })),
     ctx.session.hook("compaction", guarded("compaction hook", async (event) => {
       await injectCompactionContext(stateStore, event)
@@ -99,6 +100,8 @@ export async function registerOpenUltraCode(
 const modelListTtlMs = 60_000
 
 export interface ModelCatalog {
+  /** All models opencode currently offers; undefined when the list is unavailable. */
+  readonly list: () => Promise<readonly ModelInfoSummary[] | undefined>
   /** The model's entry in opencode's model list; undefined when unknown or the list is unavailable. */
   readonly find: (providerID: string, modelID: string) => Promise<ModelInfoSummary | undefined>
 }
@@ -106,19 +109,29 @@ export interface ModelCatalog {
 /** opencode's model list (`ctx.model.list()`), cached for a minute and shared by all hooks and tools. */
 export function createModelCatalog(ctx: OpenCodePluginContext): ModelCatalog {
   let cache: { readonly models: readonly ModelInfoSummary[]; readonly loadedAt: number } | undefined
-  return {
-    async find(providerID, modelID) {
-      try {
-        if (cache === undefined || Date.now() - cache.loadedAt > modelListTtlMs) {
-          cache = { models: (await ctx.model.list()).data, loadedAt: Date.now() }
-        }
-      } catch (error) {
-        logFailure("model lookup", error)
-        return undefined
+  const list = async () => {
+    try {
+      if (cache === undefined || Date.now() - cache.loadedAt > modelListTtlMs) {
+        cache = { models: (await ctx.model.list()).data, loadedAt: Date.now() }
       }
-      return cache.models.find((entry) => entry.providerID === providerID && (entry.id === modelID || entry.modelID === modelID))
+      return cache.models
+    } catch (error) {
+      logFailure("model lookup", error)
+      return undefined
     }
   }
+  return {
+    list,
+    async find(providerID, modelID) {
+      return (await list())?.find((entry) => entry.providerID === providerID && (entry.id === modelID || entry.modelID === modelID))
+    }
+  }
+}
+
+/** Checks fusion references against opencode's live model list; nothing is judged while it is unavailable. */
+async function fusionModelIssues(catalog: ModelCatalog, references: Readonly<Record<string, string>>): Promise<FusionModelIssue[]> {
+  const models = await catalog.list()
+  return models === undefined ? [] : analyzeFusionModels(models, references)
 }
 
 /** Output limit and declared variants of the selected model; empty when opencode does not list it. */
@@ -129,46 +142,6 @@ async function modelLimits(catalog: ModelCatalog, model: ModelRef | undefined): 
     ...(info.limit?.output === undefined ? {} : { outputTokens: info.limit.output }),
     variants: (info.variants ?? []).map((variant) => variant.id)
   }
-}
-
-export interface FusionVariantIssue {
-  readonly role: string
-  readonly reference: string
-  readonly variants: readonly string[]
-}
-
-/**
- * Checks `provider/model#variant` references against the variants opencode reports for each
- * model. A model without the requested variant makes opencode refuse to start the agent
- * ("Variant unavailable for <model>: max"). Models opencode does not list are not judged.
- */
-export async function findVariantIssues(catalog: ModelCatalog, references: Readonly<Record<string, string>>): Promise<FusionVariantIssue[]> {
-  const issues: FusionVariantIssue[] = []
-  for (const [role, reference] of Object.entries(references)) {
-    const match = /^([^/]+)\/([^#]+)#(.+)$/u.exec(reference)
-    if (match === null) continue
-    const [, providerID = "", modelID = "", variant = ""] = match
-    const info = await catalog.find(providerID, modelID)
-    const variants = (info?.variants ?? []).map((entry) => entry.id)
-    if (info !== undefined && !variants.includes(variant)) issues.push({ role, reference, variants })
-  }
-  return issues
-}
-
-const fusionRoleLabels: Readonly<Record<string, { readonly label: string; readonly flag: string }>> = {
-  panelA: { label: "Fusion panel A", flag: "--panel-a" },
-  panelB: { label: "Fusion panel B", flag: "--panel-b" },
-  decider: { label: "Fusion arbiter", flag: "--decider" }
-}
-
-export function describeVariantIssue(issue: FusionVariantIssue): string {
-  const role = fusionRoleLabels[issue.role] ?? { label: issue.role, flag: `--${issue.role}` }
-  const base = issue.reference.replace(/#[^#]+$/u, "")
-  const variant = issue.reference.slice(base.length + 1)
-  const available = issue.variants.length === 0 ? "it declares no variants" : `it declares ${issue.variants.join(", ")}`
-  const fixes = [base, ...issue.variants.map((entry) => `${base}#${entry}`)].filter((entry) => /^[^#]+(?:#max)?$/u.test(entry))
-  return `${role.label} uses ${issue.reference}, but opencode reports no "${variant}" variant for ${base} (${available}). ` +
-    `Fix it with /ultracode-fusion-models ${role.flag} ${fixes.join(" or ")}.`
 }
 
 function guarded<T>(label: string, callback: (event: T) => void | Promise<void>): (event: T) => Promise<void> {
@@ -199,6 +172,13 @@ function createTools(
       additionalProperties: false
     }),
     toToolDefinition("open_ultracode_record_intake", createRecordIntakeTool(stateStore), recordIntakeInputSchema()),
+    toToolDefinition("open_ultracode_list_models", createListModelsTool(catalog), {
+      type: "object",
+      properties: {
+        provider: { type: "string", description: "Only list this provider's models, for example the provider of a failing fusion role." }
+      },
+      additionalProperties: false
+    }),
     toToolDefinition("open_ultracode_record_verification", createRecordVerificationTool(stateStore), verificationInputSchema()),
     toToolDefinition("open_ultracode_record_blocked_check", createRecordBlockedCheckTool(stateStore), blockedCheckInputSchema()),
     toToolDefinition("open_ultracode_completion_report", createCompletionReportTool(config, stateStore), {
@@ -231,8 +211,8 @@ function createTools(
           const requested = Object.fromEntries(
             ["panelA", "panelB", "decider"].flatMap((key) => (typeof request[key] === "string" ? [[key, request[key]]] : []))
           ) as Record<string, string>
-          const issues = await findVariantIssues(catalog, requested)
-          if (issues.length > 0) throw new TypeError(issues.map(describeVariantIssue).join(" "))
+          const issues = await fusionModelIssues(catalog, requested)
+          if (issues.length > 0) throw new TypeError(issues.map(describeFusionModelIssue).join(" "))
           await ctx.permission.assert({
             sessionID: context.sessionID,
             agent: context.agent,
@@ -245,6 +225,30 @@ function createTools(
       }
     }
   ]
+}
+
+/**
+ * Read-only view of opencode's model list for choosing a valid fusion fallback: every model
+ * reference the fusion tool accepts, with the variants opencode reports for it.
+ */
+function createListModelsTool(catalog: ModelCatalog) {
+  return {
+    description:
+      "List the models opencode currently offers, grouped by provider, as fusion references (provider/model, plus provider/model#max where the model declares a max variant). Use it to pick a valid fallback when a fusion role's model or variant is unavailable.",
+    async execute(input: unknown) {
+      const provider = isRecord(input) && typeof input.provider === "string" ? input.provider : undefined
+      const models = await catalog.list()
+      if (models === undefined) return { available: false, reason: "opencode's model list is unavailable right now." }
+      const providers: Record<string, Array<{ reference: string; variants: string[]; maxReference?: string }>> = {}
+      for (const model of models) {
+        if (provider !== undefined && model.providerID !== provider) continue
+        const variants = (model.variants ?? []).map((variant) => variant.id)
+        const reference = `${model.providerID}/${model.id}`
+        ;(providers[model.providerID] ??= []).push({ reference, variants, ...(variants.includes("max") ? { maxReference: `${reference}#max` } : {}) })
+      }
+      return { available: true, providers }
+    }
+  }
 }
 
 async function observePermissionReplies(
@@ -308,13 +312,23 @@ async function activateWorkflow(stateStore: WorkflowStateStore, event: SessionPr
 
 const fusionCheckMarker = "OpenUltraCode fusion check:"
 
+/** How the coordinator recovers: propose a valid fallback, let the user decide, then fix it. */
+const fusionFallbackInstruction =
+  "Before dispatching any affected fusion agent: tell the user about each problem, propose the suggested fallback " +
+  "(or another valid model of the same provider from open_ultracode_list_models), and ask the user to confirm it or name another model. " +
+  "Wait for the answer. Then call open_ultracode_configure_fusion with the model the user chose (it asks for permission); " +
+  "opencode applies the change to the next agent dispatch without a restart, so continue the fusion run afterwards. " +
+  "If the user declines, do not dispatch the affected agents; continue with the remaining valid roles only if the user agrees, otherwise stop and report the configuration problem. " +
+  "If the user cannot be asked in this session (no question tool, non-interactive run), use the suggested fallback for this run only by passing it as the dispatch's explicit model, " +
+  "do not change the fusion configuration, and disclose the fallback and the persistent fix command in the final report."
+
 /**
- * Before a fusion workflow dispatches its panels, compares each fusion agent's variant with
- * the variants opencode reports for its model. A mismatch is shown in the prompt (so the
- * coordinator stops instead of launching a subagent that opencode refuses) and recorded as a
- * degradation notice.
+ * Before a fusion workflow dispatches its panels, checks each fusion agent's provider, model,
+ * and variant against opencode's live model list. Problems are shown in the prompt together
+ * with a valid fallback from the same provider and instructions for the coordinator to ask
+ * the user, and recorded as degradation notices. Nothing is changed without the user.
  */
-async function checkFusionVariants(
+async function checkFusionModels(
   catalog: ModelCatalog,
   stateStore: WorkflowStateStore,
   projectDirectory: string,
@@ -326,18 +340,17 @@ async function checkFusionVariants(
   }
 
   const configured = await configureFusionModels(projectDirectory, {})
-  const issues = await findVariantIssues(catalog, { ...configured.models })
+  const issues = await fusionModelIssues(catalog, { ...configured.models })
   if (issues.length === 0) return
 
-  event.prompt.text = `${text}\n\n${fusionCheckMarker} ${issues.map(describeVariantIssue).join(" ")} ` +
-    "Do not dispatch the affected fusion agents until this is fixed; report the configuration problem to the user instead."
+  event.prompt.text = `${text}\n\n${fusionCheckMarker} ${issues.map(describeFusionModelIssue).join(" ")} ${fusionFallbackInstruction}`
   await stateStore.mutate((state) => ({
     ...state,
     updatedAt: new Date().toISOString(),
     degradations: issues.reduce(
       (notices, issue) => replaceDegradation(notices, createUnsupportedCapabilityNotice({
-        capability: `${fusionRoleLabels[issue.role]?.label ?? issue.role} variant`,
-        reason: describeVariantIssue(issue),
+        capability: `${fusionRoleLabel(issue.role)} model`,
+        reason: describeFusionModelIssue(issue),
         phase: state.phase
       })),
       state.degradations

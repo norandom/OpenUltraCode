@@ -144,6 +144,9 @@ OpenUltraCode commands start a project-local workflow record automatically. Keep
 - `open_ultracode_record_blocked_check`: record a check that could not run, with the reason and residual risk.
 - `open_ultracode_status`: read the current phase, open findings, verification, and degradation notices.
 - `open_ultracode_completion_report`: produce the final status through the verification gate instead of judging completion yourself.
+- `open_ultracode_list_models`: list the models and variants opencode currently offers per provider.
+
+When a fusion run reports an `OpenUltraCode fusion check:` problem (unavailable provider, model, or variant), do not dispatch the affected fusion agent. Tell the user what is wrong, propose the suggested fallback from the same provider or another valid model from `open_ultracode_list_models`, and ask the user to confirm or name another model. Only after the user answers, call `open_ultracode_configure_fusion` with the chosen model; opencode applies it to the next dispatch, so the fusion run can continue. If the user cannot be asked (non-interactive run), use the suggested fallback for this run only as the dispatch's explicit model, leave the configuration unchanged, and disclose the fallback and the persistent fix in the final report.
 
 If the tools are unavailable, keep the same information in the conversation and say that the workflow record is degraded.
 

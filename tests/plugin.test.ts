@@ -217,6 +217,7 @@ describe("OpenUltraCode OpenCode 2 plugin entry point", () => {
       [
         "open_ultracode_completion_report",
         "open_ultracode_configure_fusion",
+        "open_ultracode_list_models",
         "open_ultracode_record_blocked_check",
         "open_ultracode_record_intake",
         "open_ultracode_record_verification",
@@ -926,13 +927,13 @@ describe("OpenUltraCode workflow lifecycle in OpenCode 2", () => {
 
     ctx.denyPermissionAsserts = true
     const before = await readFile(panelA, "utf8")
-    await assert.rejects(() => executeTool(ctx, "open_ultracode_configure_fusion", { panelA: "openai/gpt-x" }), /denied/u)
+    await assert.rejects(() => executeTool(ctx, "open_ultracode_configure_fusion", { panelA: "vibe-oidc/mistral-large-latest" }), /denied/u)
     assert.equal(await readFile(panelA, "utf8"), before, "a denied update must not touch agent files")
 
     ctx.denyPermissionAsserts = false
-    await executeTool(ctx, "open_ultracode_configure_fusion", { panelA: "openai/gpt-x" })
+    await executeTool(ctx, "open_ultracode_configure_fusion", { panelA: "vibe-oidc/mistral-large-latest" })
     assert.deepEqual(ctx.permissionAsserts.map((request) => request.action), ["open_ultracode_configure_fusion", "open_ultracode_configure_fusion"])
-    assert.match(await readFile(panelA, "utf8"), /^model: openai\/gpt-x$/mu)
+    assert.match(await readFile(panelA, "utf8"), /^model: vibe-oidc\/mistral-large-latest$/mu)
   })
 
   async function fusionProject(models: { panelA: string; panelB: string; decider: string }): Promise<string> {
@@ -953,7 +954,7 @@ describe("OpenUltraCode workflow lifecycle in OpenCode 2", () => {
 
     await assert.rejects(
       () => executeTool(ctx, "open_ultracode_configure_fusion", { panelA: "vibe-oidc/mistral-large-latest#max" }),
-      /Fusion panel A uses vibe-oidc\/mistral-large-latest#max, but opencode reports no "max" variant .*declares no variants.*--panel-a vibe-oidc\/mistral-large-latest\./u
+      /Fusion panel A uses vibe-oidc\/mistral-large-latest#max, but opencode reports no "max" variant .*declares no variants.*Suggested fallback: vibe-oidc\/mistral-large-latest.*--panel-a vibe-oidc\/mistral-large-latest\./u
     )
     assert.equal(ctx.permissionAsserts.length, 0, "an invalid request must fail before asking for permission")
 
@@ -975,13 +976,40 @@ describe("OpenUltraCode workflow lifecycle in OpenCode 2", () => {
     assert.match(event.prompt.text, /Fusion panel A uses vibe-oidc\/mistral-large-latest#max/u)
     assert.match(event.prompt.text, /Fusion arbiter uses vibe-oidc\/mistral-large-2512#max/u)
     assert.doesNotMatch(event.prompt.text, /Fusion panel B uses/u)
+    // The coordinator proposes the fallback and asks the user before changing anything.
+    assert.match(event.prompt.text, /Suggested fallback: vibe-oidc\/mistral-large-latest/u)
+    assert.match(event.prompt.text, /ask the user to confirm it or name another model\. Wait for the answer\./u)
+    assert.match(event.prompt.text, /open_ultracode_list_models/u)
+    assert.match(event.prompt.text, /cannot be asked .*for this run only .*do not change the fusion configuration/u)
     const status = await executeTool(ctx, "open_ultracode_status", {}) as { degradations: string[] }
-    assert.ok(status.degradations.includes("unsupported-fusion-panel-a-variant"), status.degradations.join(", "))
+    assert.ok(status.degradations.includes("unsupported-fusion-panel-a-model"), status.degradations.join(", "))
 
     const valid = await setupPlugin(await fusionProject({ panelA: "vibe-oidc/mistral-large-latest", panelB: "vibe-oidc/zai-glm-5-3#max", decider: "vibe-oidc/mistral-large-4#max" }), { enabled: true })
     const clean = { sessionID: "session-1", prompt: { text: template.replace(/^---[\s\S]*?---\r?\n/u, "").replaceAll("$ARGUMENTS", "question") } } as unknown as SessionPromptEvent
     await getSessionHook(valid, "prompt")(clean as never)
     assert.doesNotMatch(clean.prompt.text, /OpenUltraCode fusion check:/u)
+  })
+
+  it("reports an unavailable provider before dispatch and lists valid models per provider", async () => {
+    const projectRoot = await fusionProject({ panelA: "mistral/mistral-large-4#max", panelB: "vibe-oidc/zai-glm-5-3#max", decider: "vibe-oidc/mistral-large-4#max" })
+    const ctx = await setupPlugin(projectRoot, { enabled: true })
+    const template = await readFile(join(process.cwd(), ".opencode", "commands", "ultracode-fusion.md"), "utf8")
+    const event = { sessionID: "session-1", prompt: { text: template.replace(/^---[\s\S]*?---\r?\n/u, "").replaceAll("$ARGUMENTS", "task") } } as unknown as SessionPromptEvent
+
+    await getSessionHook(ctx, "prompt")(event as never)
+    // The fake catalog has a "mistral" provider, so use one it does not have.
+    assert.doesNotMatch(event.prompt.text, /provider mistral is not available/u)
+
+    const missing = await setupPlugin(await fusionProject({ panelA: "absent/model-x", panelB: "vibe-oidc/zai-glm-5-3#max", decider: "vibe-oidc/mistral-large-4#max" }), { enabled: true })
+    const missingEvent = { sessionID: "session-1", prompt: { text: template.replace(/^---[\s\S]*?---\r?\n/u, "").replaceAll("$ARGUMENTS", "task") } } as unknown as SessionPromptEvent
+    await getSessionHook(missing, "prompt")(missingEvent as never)
+    assert.match(missingEvent.prompt.text, /Fusion panel A uses absent\/model-x, but provider absent is not available in opencode right now/u)
+
+    const listed = await executeTool(ctx, "open_ultracode_list_models", { provider: "vibe-oidc" }) as { available: boolean; providers: Record<string, Array<{ reference: string; maxReference?: string }>> }
+    assert.equal(listed.available, true)
+    assert.deepEqual(Object.keys(listed.providers), ["vibe-oidc"])
+    assert.deepEqual(listed.providers["vibe-oidc"]?.find((model) => model.reference === "vibe-oidc/mistral-large-4"), { reference: "vibe-oidc/mistral-large-4", variants: ["low", "high", "max"], maxReference: "vibe-oidc/mistral-large-4#max" })
+    assert.deepEqual(listed.providers["vibe-oidc"]?.find((model) => model.reference === "vibe-oidc/mistral-large-latest"), { reference: "vibe-oidc/mistral-large-latest", variants: [] })
   })
 
   it("advertises exactly the fields its validators require", async () => {

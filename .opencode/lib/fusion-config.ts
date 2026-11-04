@@ -91,7 +91,8 @@ export async function configureFusionModels(
     directory,
     models: requested,
     reasoningEffort: Object.values(requested).every((model) => model.endsWith("#max")) ? "max" : "mixed-or-unset",
-    reloadAdvice: "Quit and restart OpenCode to load the updated fusion agent metadata before the next fusion run."
+    // Verified with opencode 2.2.5: an edited agent file applies to the next dispatch of that agent.
+    reloadAdvice: "opencode applies the updated fusion agents to the next dispatch; restart opencode if a running session still uses the previous model."
   }
 }
 
