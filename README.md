@@ -1,3 +1,5 @@
+![Rubik's cubes on dual threshold scales](assets/rubiks-cubes-dual-threshold-scales.png)
+
 # OpenUltraCode
 
 OpenUltraCode adds UltraCode-style workflow discipline to OpenCode 2: structured phases, adversarial review, and evidence-based completion checks on top of the opencode session you already run. It keeps the model you already selected, then adds slash commands, role agents, a skill, and a small plugin for workflow state and verification tools.
